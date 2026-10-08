@@ -5,6 +5,8 @@ package aissh
 import (
 	"encoding/base64"
 	"encoding/binary"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -38,5 +40,27 @@ func TestWindowsScheduledTask(t *testing.T) {
 	s, err := b.status()
 	if err != nil || s != (startupStatus{true, true, true}) {
 		t.Fatalf("%+v %v", s, err)
+	}
+}
+
+func TestWindowsStartupDirectoryProtection(t *testing.T) {
+	if !startupAdmin() {
+		t.Skip("requires an elevated Windows process")
+	}
+	dir := filepath.Join(t.TempDir(), "installed")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "client.json")
+	for i := 0; i < 2; i++ {
+		if err := protectStartupDirectory(dir); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("configuration"), 0644); err != nil {
+			t.Fatalf("update %d: %v", i, err)
+		}
+		if data, err := os.ReadFile(path); err != nil || string(data) != "configuration" {
+			t.Fatalf("read %d: %s %v", i, data, err)
+		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,18 +47,40 @@ func windowsTaskScript() string {
 	return `$a=New-ScheduledTaskAction -Execute ` + psQuote(exe) + ` -Argument '--service-run' -WorkingDirectory ` + psQuote(dir) + `; $trigger=New-ScheduledTaskTrigger -AtStartup; $p=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest; $s=New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew; Register-ScheduledTask -TaskName 'aisshc' -TaskPath '\' -Action $a -Trigger $trigger -Principal $p -Settings $s | Out-Null`
 }
 func protectStartupDirectory(dir string) error {
-	tool := filepath.Join(os.Getenv("SystemRoot"), "System32", "icacls.exe")
-	// Reset prior explicit grants, transfer ownership, then remove inheritance.
-	for _, args := range [][]string{
-		{dir, "/reset", "/T"},
-		{dir, "/setowner", "*S-1-5-32-544", "/T"},
-		{dir, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/T"},
-	} {
-		if _, err := runStartupCommand(tool, args...); err != nil {
-			return fmt.Errorf("protect startup directory: %w", err)
+	// Give directories inheritable ACEs, but files direct full-access ACEs.
+	// Applying directory inheritance flags recursively with icacls can leave
+	// existing files without an effective write grant during an update.
+	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-	}
-	return nil
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing startup symlink %s", path)
+		}
+		sddl := "O:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)"
+		if entry.IsDir() {
+			sddl = "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
+		}
+		sd, err := windows.SecurityDescriptorFromString(sddl)
+		if err != nil {
+			return err
+		}
+		dacl, _, err := sd.DACL()
+		if err != nil {
+			return err
+		}
+		owner, _, err := sd.Owner()
+		if err != nil {
+			return err
+		}
+		err = windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+			windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+			owner, nil, dacl, nil)
+		if err != nil {
+			return fmt.Errorf("protect startup path %s: %w", path, err)
+		}
+		return nil
+	})
 }
 func (b *windowsStartup) install(c StartupConfig) error {
 	_, err := b.ps(windowsTaskScript())
