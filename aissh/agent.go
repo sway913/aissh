@@ -94,6 +94,12 @@ func RunAgent(ctx context.Context, o AgentOptions) error {
 	}
 	id, _ := fp.ID()
 	name, _ := os.Hostname()
+	username, account, accountErr := detectAccount(runtime.GOOS, name)
+	if accountErr != nil {
+		log.Printf("unable to read system account: %v", accountErr)
+	} else {
+		log.Printf("system account %s; SSH username %s", account, username)
+	}
 	ca, e := TrustPEM(o.CAFile)
 	if e != nil {
 		return e
@@ -135,7 +141,7 @@ func RunAgent(ctx context.Context, o AgentOptions) error {
 		var c DeviceConfig
 		register := token == ""
 		if register {
-			e = callAPI(ctx, h, "POST", base+"/v1/register", "", "", Registration{Fingerprint: fp, Name: name, OS: runtime.GOOS}, &c)
+			e = callAPI(ctx, h, "POST", base+"/v1/register", "", "", Registration{Fingerprint: fp, Name: name, OS: runtime.GOOS, Username: username, Account: account}, &c)
 		} else {
 			e = callAPI(ctx, h, "GET", base+"/v1/config", id, token, nil, &c)
 		}

@@ -12,8 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 const DefaultHost = "149.88.87.82"
@@ -25,6 +27,8 @@ var ErrDenied = errors.New("device or session disabled, expired, or unknown")
 type Device struct {
 	ID       string    `json:"id"`
 	Name     string    `json:"name"`
+	Username string    `json:"username,omitempty"`
+	Account  string    `json:"account,omitempty"`
 	OS       string    `json:"os"`
 	MACs     []string  `json:"macs"`
 	Enabled  bool      `json:"enabled"`
@@ -110,6 +114,8 @@ func (s *Store) saveLocked() error {
 type Registration struct {
 	Fingerprint Fingerprint `json:"fingerprint"`
 	Name        string      `json:"name"`
+	Username    string      `json:"username,omitempty"`
+	Account     string      `json:"account,omitempty"`
 	OS          string      `json:"os"`
 }
 type Grant struct {
@@ -131,7 +137,7 @@ func (s *Store) Register(r Registration) (DeviceConfig, error) {
 	if e != nil {
 		return DeviceConfig{}, e
 	}
-	if len(r.Name) > 128 || len(r.OS) > 32 {
+	if len(r.Name) > 128 || len(r.OS) > 32 || len(r.Username) > 256 || len(r.Account) > 256 || strings.ContainsFunc(r.Username+r.Account, unicode.IsControl) {
 		return DeviceConfig{}, fmt.Errorf("invalid device details")
 	}
 	s.mu.Lock()
@@ -145,11 +151,27 @@ func (s *Store) Register(r Registration) (DeviceConfig, error) {
 		if len(s.state.Devices) >= 1000 {
 			return DeviceConfig{}, fmt.Errorf("device limit reached")
 		}
-		d = &Device{ID: id, Name: r.Name, OS: r.OS, MACs: append([]string(nil), r.Fingerprint.MACs...), Enabled: true, Created: now, LastSeen: now, Secret: randomSecret()}
+		d = &Device{ID: id, Name: r.Name, Username: r.Username, Account: r.Account, OS: r.OS, MACs: append([]string(nil), r.Fingerprint.MACs...), Enabled: true, Created: now, LastSeen: now, Secret: randomSecret()}
 		s.state.Devices[id] = d
 		if e = s.saveLocked(); e != nil {
 			delete(s.state.Devices, id)
 			return DeviceConfig{}, e
+		}
+	} else {
+		old := *d
+		d.Name, d.OS = r.Name, r.OS
+		// Older clients omit these fields; keep previously reported account details.
+		if r.Username != "" {
+			d.Username = r.Username
+		}
+		if r.Account != "" {
+			d.Account = r.Account
+		}
+		if d.Name != old.Name || d.OS != old.OS || d.Username != old.Username || d.Account != old.Account {
+			if e = s.saveLocked(); e != nil {
+				*d = old
+				return DeviceConfig{}, e
+			}
 		}
 	}
 	d.LastSeen = now
