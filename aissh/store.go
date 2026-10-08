@@ -28,6 +28,7 @@ type Device struct {
 	OS       string    `json:"os"`
 	MACs     []string  `json:"macs"`
 	Enabled  bool      `json:"enabled"`
+	Online   bool      `json:"online"`
 	Created  time.Time `json:"created"`
 	LastSeen time.Time `json:"lastSeen"`
 	Secret   string    `json:"secret,omitempty"`
@@ -197,10 +198,20 @@ func (s *Store) configLocked(v session) DeviceConfig {
 func (s *Store) Snapshot() ([]Device, []Rule) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now()
+	active := make(map[string]bool, len(s.sessions))
+	for _, session := range s.sessions {
+		if now.Before(session.Expires) {
+			active[session.DeviceID] = true
+		}
+	}
 	ds := make([]Device, 0, len(s.state.Devices))
 	for _, p := range s.state.Devices {
 		d := *p
 		d.Secret = ""
+		// Evaluate heartbeats with the same clock that timestamps them. Browser
+		// clocks may differ, and persisted heartbeats alone do not imply a session.
+		d.Online = d.Enabled && active[d.ID] && now.Sub(d.LastSeen) < 30*time.Second
 		ds = append(ds, d)
 	}
 	sort.Slice(ds, func(i, j int) bool { return ds[i].Created.Before(ds[j].Created) })

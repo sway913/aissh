@@ -188,3 +188,49 @@ func TestDevicePolicyRejectsImpersonationAndPublicProxy(t *testing.T) {
 		t.Fatal("legacy visitor without a registered session was admitted")
 	}
 }
+
+func TestOnlineStatusUsesServerHeartbeatAndLiveSession(t *testing.T) {
+	s, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := mustRegister(t, s, "00:11:22:33:44:55", "A")
+	status := func(want bool) {
+		t.Helper()
+		devices, _ := s.Snapshot()
+		if len(devices) != 1 || devices[0].Online != want {
+			t.Fatalf("online = %v, want %v", devices, want)
+		}
+	}
+	status(true)
+	// A stale heartbeat must go offline even while the credential remains valid.
+	s.mu.Lock()
+	s.state.Devices[c.ID].LastSeen = time.Now().Add(-time.Minute)
+	s.mu.Unlock()
+	status(false)
+	if _, err = s.Config(c.ID, c.Token); err != nil {
+		t.Fatal(err)
+	}
+	status(true)
+	// A restart discards sessions, so a recent persisted timestamp is insufficient.
+	reopened, err := OpenStore(filepath.Dir(s.path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, _ := reopened.Snapshot()
+	if devices[0].Online {
+		t.Fatal("device appeared online without a live session")
+	}
+	s.mu.Lock()
+	session := s.sessions[runID(c.Token)]
+	session.Expires = time.Now().Add(-time.Second)
+	s.sessions[runID(c.Token)] = session
+	s.mu.Unlock()
+	status(false)
+	c = mustRegister(t, s, "00:11:22:33:44:55", "A")
+	status(true)
+	if err = s.SetEnabled(c.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	status(false)
+}
