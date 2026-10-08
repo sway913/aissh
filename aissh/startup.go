@@ -82,8 +82,16 @@ func NewStartupConfig(o AgentOptions) (StartupConfig, error) {
 	c := StartupConfig{Options: o, User: u.Username, Account: u.Username}
 	name, _ := os.Hostname()
 	c.Username = sshUsername(runtime.GOOS, name, u.Username)
-	c.UID, _ = strconv.Atoi(u.Uid)
-	c.GID, _ = strconv.Atoi(u.Gid)
+	if runtime.GOOS != "windows" {
+		c.UID, err = strconv.Atoi(u.Uid)
+		if err != nil {
+			return c, fmt.Errorf("invalid user UID: %w", err)
+		}
+		c.GID, err = strconv.Atoi(u.Gid)
+		if err != nil {
+			return c, fmt.Errorf("invalid user GID: %w", err)
+		}
+	}
 	if runtime.GOOS == "windows" {
 		fp, err := DetectFingerprint()
 		if err != nil {

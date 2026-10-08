@@ -22,8 +22,8 @@ func TestLinuxStartupStates(t *testing.T) {
 			t.Fatalf("%+v %v", s, err)
 		}
 	}
-	unit := linuxStartupUnit(StartupConfig{User: "alice"})
-	for _, s := range []string{`User="alice"`, `"/usr/local/lib/aissh/aisshc" --service-run`, "Restart=always", "WantedBy=multi-user.target"} {
+	unit := linuxStartupUnit(StartupConfig{User: "alice", UID: 1001})
+	for _, s := range []string{`User=1001`, `"/usr/local/lib/aissh/aisshc" --service-run`, "Restart=always", "WantedBy=multi-user.target"} {
 		if !strings.Contains(unit, s) {
 			t.Fatalf("missing %q", s)
 		}

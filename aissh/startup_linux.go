@@ -47,7 +47,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-User=%s
+User=%d
 ExecStart=%s --service-run
 Restart=always
 RestartSec=10
@@ -56,7 +56,7 @@ NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
-`, systemdQuote(c.User), systemdQuote(exe))
+`, c.UID, systemdQuote(exe))
 }
 func (b *linuxStartup) install(c StartupConfig) error {
 	if err := os.WriteFile(startupUnitPath, []byte(linuxStartupUnit(c)), 0644); err != nil {
