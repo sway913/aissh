@@ -7,15 +7,16 @@ NOWEB_TAG = $(shell [ ! -d web/frps/dist ] || [ ! -d web/frpc/dist ] && echo ',n
 build: aisshs aisshc
 
 aisshs:
-	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -tags "frps$(NOWEB_TAG)" -o bin/aisshs ./cmd/frps
+	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -tags "frps$(NOWEB_TAG)" -o bin/aisshs ./cmd/aisshs
 
 aisshc:
-	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -tags "frpc$(NOWEB_TAG)" -o bin/aisshc ./cmd/frpc
+	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -tags "frpc$(NOWEB_TAG)" -o bin/aisshc ./cmd/aisshc
 
 web:
 	$(MAKE) -f Makefile web
 
 test:
+	go test -race -tags noweb ./aissh/...
 	$(MAKE) -f Makefile test
 
 clean:

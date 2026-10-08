@@ -48,4 +48,4 @@ git push -u origin sync/frp-update
 - 新功能优先写在独立目录，通过小范围改动接入上游。
 - 保留 LICENSE、原作者版权头和上游文档。
 - 官方镜像及发布流程带有 fatedier 的目标地址和专用 secrets；aissh 不直接使用这些发布流程。
-- 迁移时仅添加构建 CI；后续管理后台的部署、域名、证书及认证需要单独实现与配置。
+- 设备管理后台与客户端运行时已实现在 `aissh/`；同步后务必执行其权限与 SSH 链路测试，并保留 `server/aissh_hooks.go` 及 visitor hook 接入。

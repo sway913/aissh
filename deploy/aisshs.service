@@ -1,0 +1,24 @@
+[Unit]
+Description=aissh device registration, authorization and SSH relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aissh
+Group=aissh
+StateDirectory=aissh
+StateDirectoryMode=0700
+ExecStart=/usr/local/bin/aisshs --data-dir /var/lib/aissh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+MemoryMax=128M
+TasksMax=128
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

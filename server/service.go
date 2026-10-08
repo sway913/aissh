@@ -79,6 +79,8 @@ func init() {
 
 // Server service
 type Service struct {
+	visitorConnHook func(net.Conn, string, string, string) (net.Conn, error)
+
 	// Dispatch connections to different handlers listen on same port
 	muxer *mux.Mux
 
@@ -893,8 +895,20 @@ func (svr *Service) RegisterVisitorConn(visitorConn net.Conn, newMsg *msg.NewVis
 		if visitorWireProtocol == "" {
 			visitorWireProtocol = wireProtocol
 		}
-		return svr.rc.VisitorManager.NewConn(newMsg.ProxyName, visitorConn, newMsg.Timestamp, newMsg.SignKey,
+		conn := visitorConn
+		if svr.visitorConnHook != nil {
+			var err error
+			conn, err = svr.visitorConnHook(conn, visitorUser, newMsg.RunID, newMsg.ProxyName)
+			if err != nil {
+				return err
+			}
+		}
+		err := svr.rc.VisitorManager.NewConn(newMsg.ProxyName, conn, newMsg.Timestamp, newMsg.SignKey,
 			newMsg.UseEncryption, newMsg.UseCompression, visitorUser, visitorWireProtocol, visitorUDPPacketCodec)
+		if err != nil && svr.visitorConnHook != nil {
+			_ = conn.Close()
+		}
+		return err
 	}
 	// TODO(deprecation): Compatible with old versions, can be without runID, user is empty. In later versions, it will be mandatory to include runID.
 	// If runID is required, it is not compatible with versions prior to v0.50.0.

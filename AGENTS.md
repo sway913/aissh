@@ -7,7 +7,10 @@
 - Keep upstream module paths and internal protocol/config names to reduce merge conflicts.
 - Put custom management functionality in an independent `aissh/` directory where practical.
 - Read `doc/aissh/upstream-sync.md` before importing upstream fixes.
-- The centralized aissh management backend is planned and has not been implemented yet.
+- Device registration, hardware fingerprints, ACL management, and agent runtime live in `aissh/`.
+- Default server is `149.88.87.82`; the client uses automatic hardware registration without device private keys.
+- Run `go test -race -tags noweb ./aissh/... ./client/... ./server/...` for auth or tunnel changes.
+- Never commit `.aissh-server/`, server private keys, admin passwords, session tokens or live device databases.
 
 ## Development Commands
 

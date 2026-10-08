@@ -1,37 +1,75 @@
 # aissh
 
-aissh 基于 [fatedier/frp](https://github.com/fatedier/frp)，面向两台非公网电脑之间的远程 SSH 访问。
+基于 [fatedier/frp](https://github.com/fatedier/frp) 的个人远程 SSH 管理工具。两台电脑都不需要公网 IP；默认通过香港服务器 `149.88.87.82` 中转。
 
-计划在香港服务器部署集中管理后台，管理设备、访问权限和 SSH 隧道。当前仓库完成了上游代码迁移与独立构建入口；集中管理后台、设备注册和权限管理尚未实现。现有 frps/frpc Dashboard 是上游自带界面。
+## 使用
 
-## 构建与使用
+在需要连接的两台电脑上分别启动：
 
-需要 Go 1.25 或更新版本。
+```sh
+./aisshc
+```
+
+无需填写服务器地址、token、设备私钥或 STCP 密钥。客户端自动识别硬件、注册设备、领取 24 小时临时会话，并每 10 秒同步后台权限。会话临近到期或服务器重启后会自动重新注册。客户端进程需要保持运行。
+
+1. 在目标电脑开启系统 SSH 服务（默认 `127.0.0.1:22`）。
+2. 启动两端的 `aisshc`，设备自动出现在后台。
+3. 后台添加“电脑 A → 电脑 B”的访问权限。
+4. 根据后台或 A 的日志显示的端口登录，例如：
+
+```sh
+ssh -p 22000 电脑B的用户名@127.0.0.1
+```
+
+SSH 账号、密码或 SSH 密钥由目标电脑的系统管理，aissh 仅管理隧道访问权限。SCP/SFTP 同样可用。目标 SSH 不在 22 端口时使用 `./aisshc --ssh-port 其他端口`。
+
+## 设备识别与权限
+
+- 优先使用具有全球管理地址的物理网卡 MAC，过滤常见虚拟/桥接接口；无此类地址时回退到本地管理 MAC。
+- 按地址排序选择一个主 MAC，结合可读取的机器 UUID、主板序列号、Linux machine-id 等计算设备 ID。
+- 额外硬件标识先哈希后上传；后台显示设备 ID、主 MAC、主机名、系统及最近活动。
+- 网卡、随机 MAC、系统重装或硬件标识读取权限变化可能改变设备 ID，需要重新授权。
+- 首次注册不分配任何访问权限。规则单向生效，双向访问需添加两条规则。
+- 临时会话只保存在内存，每次启动注册替换该设备旧会话。禁用设备会使会话失效。
+- 服务端对每条 STCP 连接检查设备与 ACL；撤销权限和禁用设备会关闭现有隧道连接，缓存旧 STCP 配置也不能重新访问。
+
+这是按需求实现的硬件指纹自动注册，不提供设备私钥的持有证明。MAC 和硬件信息可被仿冒；知道完整指纹的人可冒充该设备。适用于个人受控设备，不用于要求强设备认证的多租户环境。
+
+## 后台与服务端
+
+默认端口：
+
+| 端口 | 用途 |
+|---|---|
+| TCP 17000 | frp TLS 隧道 |
+| TCP 17443 | HTTPS 自动注册与配置接口 |
+| 127.0.0.1:17500 | 管理页面，仅本机监听 |
+
+后台通过 SSH 转发访问：
+
+```sh
+ssh -N -L 17500:127.0.0.1:17500 root@149.88.87.82
+```
+
+打开 `http://127.0.0.1:17500`。用户名为 `admin`，随机生成的密码保存在服务器 `/var/lib/aissh/admin-password`，不包含在仓库或日志中。
+
+TLS 默认信任证书内置于客户端，连接时验证服务器身份，无需客户端证书。私有证书密钥不进入仓库。更换服务器证书后需更新内置公开证书并重新分发客户端，或通过 `--ca` 指定新的信任证书。
+
+部署说明见 [部署文档](doc/aissh/deployment.md)。
+
+## 构建与测试
+
+需要 Go 1.25 或更新版本。管理页面使用内嵌 HTML，无需 Node、数据库服务或单独前端构建。
 
 ```sh
 make -f Makefile.aissh build
-./bin/aisshs -c conf/frps.toml
-./bin/aisshc -c conf/frpc.toml
+go test -race -tags noweb ./aissh/... ./client/... ./server/...
 ```
 
-- `aisshs`：运行在公网服务器上的服务端。
-- `aisshc`：运行在内网电脑上的客户端或 visitor。
-- SSH 服务仍由目标电脑的 OpenSSH 等程序提供；推荐先使用 STCP 私密代理实现访问。
-- 当前配置格式、默认配置文件名、协议及版本号沿用 frp。运行客户端时请显式传入 `-c`。
-- 无前端构建产物时，以上命令构建不包含 Dashboard 的二进制。包含现有 Dashboard：先执行 `make -f Makefile.aissh web`，再执行构建命令。
+输出为 `bin/aisshs`、`bin/aisshc`。原版命令和构建方式仍可通过上游 `Makefile` 使用。
 
-## 保持上游可同步
+## 同步官方修复
 
-保留 frp 的完整 Git 历史、Apache-2.0 许可证和原作者版权声明。底层 Go module 仍为 `github.com/fatedier/frp`，避免批量改写 import 给以后同步带来冲突。本项目的仓库地址为 `github.com/sway913/aissh`。
+保留完整 frp Git 历史、Apache-2.0 许可证和版权声明。Go module 及内部协议沿用 `github.com/fatedier/frp`，减少同步冲突。
 
-- `origin`：aissh 自有仓库。
-- `upstream`：frp 官方仓库。
-- `main`：aissh 主分支。
-
-具体步骤见 [上游同步指南](doc/aissh/upstream-sync.md)。官方功能说明保留在 [原版 README](README.frp.md) 和 [中文文档](README_zh.md)。
-
-## 自定义开发约定
-
-新管理后台及其设备管理、权限管理接口优先放在独立的 `aissh/` 目录。需要接入底层时使用尽量小的适配改动，避免批量重命名上游目录、配置字段和协议。与上游有关的缺陷修复和 aissh 自定义功能分别提交。
-
-原版发布工作流保留供参考，但仅允许在官方仓库运行；aissh 发布与部署流程另行配置。
+自定义代码集中在 `aissh/`、`cmd/aisshs/`、`cmd/aisshc/`；服务端通过进程内插件和 visitor admission hook 接入权限。官方功能说明保留在 [原版 README](README.frp.md) 和 [中文文档](README_zh.md)。同步流程见 [上游同步指南](doc/aissh/upstream-sync.md)。
