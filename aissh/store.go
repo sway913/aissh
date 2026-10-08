@@ -19,7 +19,7 @@ import (
 )
 
 const DefaultHost = "connect.builderopc.com"
-const DefaultAPIPort = 17443
+const DefaultAPIURL = "https://sshapi.builderopc.com"
 const DefaultTunnelPort = 17000
 
 var ErrDenied = errors.New("device or session disabled, expired, or unknown")

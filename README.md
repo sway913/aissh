@@ -25,7 +25,7 @@
 ssh -p 22000 电脑B的用户名@127.0.0.1
 ```
 
-新版客户端会自动读取运行它的系统账户名并上报后台，后台将目标用户名填入 SSH 命令。Windows 本机账户使用本地登录名，AD 域账户保留域前缀；显示的是运行客户端的账户，不保证该账户具有 SSH 登录权限。旧客户端需更新并重启后才能上报。用户名不参与设备 ID 计算；不读取或上传系统密码、PIN 或 SSH 私钥。
+新版客户端会自动读取运行它的系统账户名并上报后台，后台将目标用户名填入 SSH 命令。Windows 本机账户使用本地登录名，AD 域账户保留域前缀；显示的是运行客户端的账户，不保证该账户具有 SSH 登录权限。用户名不参与设备 ID 计算；不读取或上传系统密码、PIN 或 SSH 私钥。
 
 SSH 账号、密码或 SSH 密钥由目标电脑的系统管理，aissh 仅管理隧道访问权限。SCP/SFTP 同样可用。目标 SSH 不在 22 端口时使用 `./aisshc --ssh-port 其他端口`。
 
@@ -48,7 +48,8 @@ SSH 账号、密码或 SSH 密钥由目标电脑的系统管理，aissh 仅管�
 | 端口 | 用途 |
 |---|---|
 | TCP 17000 | frp TLS 隧道 |
-| TCP 17443 | HTTPS 自动注册与配置接口 |
+| HTTPS 443 | `sshapi.builderopc.com` 注册与配置，经 Cloudflare Tunnel |
+| 127.0.0.1:17443 | 注册接口内部 TLS，仅本机监听 |
 | 127.0.0.1:17500 | 管理页面，仅本机监听 |
 
 后台可通过 https://aissh.builderopc.com 使用管理员凭证登录。也可通过 SSH 转发访问：
@@ -59,9 +60,9 @@ ssh -N -L 17500:127.0.0.1:17500 root@connect.builderopc.com
 
 打开 `http://127.0.0.1:17500`。用户名为 `admin`，随机生成的密码保存在服务器 `/var/lib/aissh/admin-password`，不包含在仓库或日志中。
 
-客户端默认连接 `connect.builderopc.com`，注册接口为 `https://connect.builderopc.com:17443`，隧道端口为 `17000`。该域名必须使用仅 DNS 解析，不能开启 Cloudflare 橙云代理。换服务器时迁移 `/var/lib/aissh` 的设备数据库、管理密码和证书私钥，再更新该域名的 A 记录；客户端重新连接后使用新地址。
+客户端默认通过 `https://sshapi.builderopc.com` 注册，无需指定端口。该域名使用 Cloudflare Tunnel；SSH 数据隧道使用仅 DNS 的 `connect.builderopc.com:17000`。换服务器时迁移 `/var/lib/aissh`，更新隧道域名 A 记录并迁移 Cloudflare Tunnel。
 
-TLS 默认信任证书内置于客户端，连接时验证服务器身份，无需客户端证书。私有证书密钥不进入仓库。更换服务器证书后需更新内置公开证书并重新分发客户端，或通过 `--ca` 指定新的信任证书。
+注册 HTTPS 使用系统可信 CA 验证公网证书；数据隧道使用客户端内置的私有信任根。`--api-url` 指定注册 HTTPS 入口，`--server` 指定隧道域名，`--ca` 仅指定隧道信任根。不提供旧 IP、直连注册端口或 `--api-port` 兼容方式。
 
 部署说明见 [部署文档](doc/aissh/deployment.md)。
 

@@ -3,15 +3,17 @@ package aissh
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fatedier/frp/client"
@@ -20,8 +22,8 @@ import (
 )
 
 type AgentOptions struct {
-	Host, CAFile, StateDir       string
-	APIPort, TunnelPort, SSHPort int
+	Host, APIURL, CAFile, StateDir string
+	TunnelPort, SSHPort            int
 }
 type apiError struct{ Status int }
 
@@ -84,7 +86,26 @@ func newAgentService(o AgentOptions, c DeviceConfig, token, caPath string) (*cli
 	}
 	return client.NewService(client.ServiceOptions{Common: common, ConfigSourceAggregator: source.NewAggregator(cs)})
 }
+func registrationURL(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return "", fmt.Errorf("registration URL must be an HTTPS origin without credentials, path, query or fragment")
+	}
+	return strings.TrimSuffix(u.String(), "/"), nil
+}
+
+func registrationClient() *http.Client {
+	return &http.Client{Timeout: 15 * time.Second,
+		Transport:     &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
 func RunAgent(ctx context.Context, o AgentOptions) error {
+	base, e := registrationURL(o.APIURL)
+	if e != nil {
+		return e
+	}
 	if o.SSHPort < 1 || o.SSHPort > 65535 {
 		return fmt.Errorf("invalid local SSH port")
 	}
@@ -104,7 +125,7 @@ func RunAgent(ctx context.Context, o AgentOptions) error {
 	if e != nil {
 		return e
 	}
-	tlsCfg, e := ClientTLS(ca)
+	_, e = ClientTLS(ca)
 	if e != nil {
 		return e
 	}
@@ -115,9 +136,8 @@ func RunAgent(ctx context.Context, o AgentOptions) error {
 	if e = os.WriteFile(caPath, ca, 0600); e != nil {
 		return e
 	}
-	h := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{TLSClientConfig: tlsCfg}}
+	h := registrationClient()
 	defer h.CloseIdleConnections()
-	base := "https://" + o.Host + ":" + strconv.Itoa(o.APIPort)
 	log.Printf("device %s (%s); registering with %s", id, name, base)
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()

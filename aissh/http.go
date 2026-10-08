@@ -45,12 +45,23 @@ type rateEntry struct {
 	count  int
 }
 
+// Cloudflare overwrites this header. Only a local tunnel may supply it.
+func registrationIP(r *http.Request) string {
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if peer := net.ParseIP(host); peer != nil && peer.IsLoopback() {
+		if ip := net.ParseIP(r.Header.Get("CF-Connecting-IP")); ip != nil {
+			return ip.String()
+		}
+	}
+	return host
+}
+
 func DeviceHandler(s *Store) http.Handler {
 	mux := http.NewServeMux()
 	var mu sync.Mutex
 	limits := map[string]rateEntry{}
 	mux.HandleFunc("POST /v1/register", func(w http.ResponseWriter, r *http.Request) {
-		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+		ip := registrationIP(r)
 		minute := time.Now().Unix() / 60
 		mu.Lock()
 		entry := limits[ip]

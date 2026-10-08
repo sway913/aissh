@@ -1,6 +1,6 @@
 # aissh 部署
 
-客户端默认域名：connect.builderopc.com，当前香港服务器 IP 为 149.88.87.82。服务独立使用 17000/17443/17500，不占用已有 frps、MapLink 或 Xray 端口。
+注册入口：https://sshapi.builderopc.com；隧道域名：connect.builderopc.com，当前香港服务器 IP 为 149.88.87.82。服务独立使用 17000/17443/17500，不占用已有 frps、MapLink 或 Xray 端口。
 
 ## 证书初始化与构建
 
@@ -29,7 +29,7 @@ systemctl enable --now aisshs
 systemctl status aisshs
 ```
 
-放行 TCP 17000、17443；17500 仅监听回环地址，通过 SSH 端口转发访问。服务限制内存为 128 MB，适合当前资源紧张的服务器。无需更改现有服务。
+仅放行 TCP 17000；17443 和 17500 仅监听回环地址，通过 Cloudflare Tunnel 提供公网 HTTPS。服务限制内存为 128 MB，适合当前资源紧张的服务器。无需更改现有服务。
 
 ## 管理与回滚
 
@@ -47,10 +47,26 @@ macOS、Linux、Windows 均支持。Windows 对应 `aisshc.exe`。客户端启�
 
 ## 默认域名与迁移
 
-- 客户端入口 `connect.builderopc.com`：Cloudflare A 记录指向服务器公网 IPv4，代理关闭（仅 DNS）。TCP 17443 为注册接口，TCP 17000 为 TLS 隧道。
+- 客户端入口 `connect.builderopc.com`：Cloudflare A 记录指向服务器公网 IPv4，代理关闭（仅 DNS）。TCP 17000 为 TLS 隧道。
 - 管理后台 `https://aissh.builderopc.com`：通过现有 Cloudflare Tunnel 转发到回环管理服务，与客户端入口分开。
-- 当前内置信任公开证书保持不变。生产服务端已用该信任根签发包含 `connect.builderopc.com` 和本机回环地址的叶证书，不再包含旧公网 IP；旧版 IP 客户端需要更新。
+- 当前内置信任公开证书保持不变。生产服务端已用该信任根签发包含 `connect.builderopc.com` 和本机回环地址的叶证书，不再包含旧公网 IP。
 - 叶证书到期前使用同一信任根签发并替换服务端证书即可，不需要重新发布客户端。根私钥只保存在受保护的离线目录或备份，不进入 Git。
-- 迁移时备份 `/var/lib/aissh`，在新机器恢复同一证书、私钥、管理密码与设备数据库，安装 aisshs 并放行 17000/17443，然后更新 `connect.builderopc.com` 的 A 记录。停止旧服务器上的 aisshs，避免设备连接到不同服务器；现有会话会重连，受 DNS 缓存影响不会瞬间切换。
-- 管理域名另行迁移 Cloudflare Tunnel；更换客户端 A 记录不会自动迁移后台 Tunnel。
-- 旧版客户端默认仍使用 IP，需要先更新到支持域名的版本。可以用 `aisshc --server connect.builderopc.com` 显式指定入口；自建服务器可以用 `--server` 和 `--ca` 指定自己的域名与信任根。
+- 迁移时备份 `/var/lib/aissh`，在新机器恢复同一证书、私钥、管理密码与设备数据库，安装 aisshs 并放行 17000，然后更新 `connect.builderopc.com` 的 A 记录。停止旧服务器上的 aisshs，避免设备连接到不同服务器；现有会话会重连，受 DNS 缓存影响不会瞬间切换。
+- 注册和管理域名同时迁移 Cloudflare Tunnel；更换隧道 A 记录不会自动迁移 Tunnel。
+- 自建服务器通过 `--api-url https://注册域名`、`--server 隧道域名` 和 `--ca` 配置。注册公网证书由系统 CA 验证，`--ca` 仅用于数据隧道。不兼容旧直连注册方式。
+
+## Cloudflare Tunnel 注册入口
+
+在现有 ingress 的兜底规则之前添加：
+
+```yaml
+  - hostname: sshapi.builderopc.com
+    service: https://127.0.0.1:17443
+    originRequest:
+      originServerName: connect.builderopc.com
+      caPool: /etc/cloudflared/aissh-ca.pem
+```
+
+将 `aissh/default-ca.pem` 安装到上述 CA 路径，保留源站证书校验。通过 `cloudflared tunnel route dns hk-tunnel sshapi.builderopc.com` 创建代理 DNS 记录，验证 ingress 后重启 cloudflared。仅转发设备接口，不转发管理页面。
+
+注册限流仅在回环代理连接上接受 `CF-Connecting-IP`，避免所有客户端共享同一限流额度。新版本需要更新全部客户端并重启；设备 ID、授权关系和已分配 SSH 端口保持不变。
