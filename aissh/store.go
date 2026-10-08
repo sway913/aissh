@@ -18,7 +18,7 @@ import (
 	"unicode"
 )
 
-const DefaultHost = "149.88.87.82"
+const DefaultHost = "connect.builderopc.com"
 const DefaultAPIPort = 17443
 const DefaultTunnelPort = 17000
 

@@ -1,13 +1,13 @@
 # aissh 部署
 
-香港默认服务器：149.88.87.82。服务独立使用 17000/17443/17500，不占用已有 frps、MapLink 或 Xray 端口。
+客户端默认域名：connect.builderopc.com，当前香港服务器 IP 为 149.88.87.82。服务独立使用 17000/17443/17500，不占用已有 frps、MapLink 或 Xray 端口。
 
 ## 证书初始化与构建
 
 生产服务器证书已与内置 `aissh/default-ca.pem` 对应。初次在新服务器部署时生成证书，再将公开证书打包到客户端：
 
 ```sh
-go run ./cmd/aisshs --init-tls --host 149.88.87.82 --data-dir .aissh-server
+go run ./cmd/aisshs --init-tls --host connect.builderopc.com --data-dir .aissh-server
 cp .aissh-server/server.crt aissh/default-ca.pem
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -tags noweb -o bin/linux-amd64/aisshs ./cmd/aisshs
 make -f Makefile.aissh build
@@ -44,3 +44,13 @@ systemctl status aisshs
 macOS、Linux、Windows 均支持。Windows 对应 `aisshc.exe`。客户端启动时自动注册；目标系统必须启用 SSH 服务。不要同时在同一台电脑启动多个 aisshc：新注册会取代旧会话。
 
 当前权限配置最多约 10 秒同步，撤销在服务器立即生效，并有 1 秒周期检查作为兜底。授权撤销会中断已有 SSH 会话。客户端本地 visitor 端口从 22000 开始分配；若被其他程序占用，需要先释放对应端口。
+
+## 默认域名与迁移
+
+- 客户端入口 `connect.builderopc.com`：Cloudflare A 记录指向服务器公网 IPv4，代理关闭（仅 DNS）。TCP 17443 为注册接口，TCP 17000 为 TLS 隧道。
+- 管理后台 `https://aissh.builderopc.com`：通过现有 Cloudflare Tunnel 转发到回环管理服务，与客户端入口分开。
+- 当前内置信任公开证书保持不变。生产服务端已用该信任根签发包含 `connect.builderopc.com` 和本机回环地址的叶证书，不再包含旧公网 IP；旧版 IP 客户端需要更新。
+- 叶证书到期前使用同一信任根签发并替换服务端证书即可，不需要重新发布客户端。根私钥只保存在受保护的离线目录或备份，不进入 Git。
+- 迁移时备份 `/var/lib/aissh`，在新机器恢复同一证书、私钥、管理密码与设备数据库，安装 aisshs 并放行 17000/17443，然后更新 `connect.builderopc.com` 的 A 记录。停止旧服务器上的 aisshs，避免设备连接到不同服务器；现有会话会重连，受 DNS 缓存影响不会瞬间切换。
+- 管理域名另行迁移 Cloudflare Tunnel；更换客户端 A 记录不会自动迁移后台 Tunnel。
+- 旧版客户端默认仍使用 IP，需要先更新到支持域名的版本。可以用 `aisshc --server connect.builderopc.com` 显式指定入口；自建服务器可以用 `--server` 和 `--ca` 指定自己的域名与信任根。

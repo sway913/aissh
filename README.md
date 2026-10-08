@@ -4,7 +4,7 @@
 
 [最新开发版二进制](https://github.com/sway913/aissh/releases/tag/aissh-latest) · [全部 Releases](https://github.com/sway913/aissh/releases)
 
-基于 [fatedier/frp](https://github.com/fatedier/frp) 的个人远程 SSH 管理工具。两台电脑都不需要公网 IP；默认通过香港服务器 `149.88.87.82` 中转。
+基于 [fatedier/frp](https://github.com/fatedier/frp) 的个人远程 SSH 管理工具。两台电脑都不需要公网 IP；默认通过 `connect.builderopc.com` 中转，当前解析到香港服务器。
 
 ## 使用
 
@@ -51,13 +51,15 @@ SSH 账号、密码或 SSH 密钥由目标电脑的系统管理，aissh 仅管�
 | TCP 17443 | HTTPS 自动注册与配置接口 |
 | 127.0.0.1:17500 | 管理页面，仅本机监听 |
 
-后台通过 SSH 转发访问：
+后台可通过 https://aissh.builderopc.com 使用管理员凭证登录。也可通过 SSH 转发访问：
 
 ```sh
-ssh -N -L 17500:127.0.0.1:17500 root@149.88.87.82
+ssh -N -L 17500:127.0.0.1:17500 root@connect.builderopc.com
 ```
 
 打开 `http://127.0.0.1:17500`。用户名为 `admin`，随机生成的密码保存在服务器 `/var/lib/aissh/admin-password`，不包含在仓库或日志中。
+
+客户端默认连接 `connect.builderopc.com`，注册接口为 `https://connect.builderopc.com:17443`，隧道端口为 `17000`。该域名必须使用仅 DNS 解析，不能开启 Cloudflare 橙云代理。换服务器时迁移 `/var/lib/aissh` 的设备数据库、管理密码和证书私钥，再更新该域名的 A 记录；客户端重新连接后使用新地址。
 
 TLS 默认信任证书内置于客户端，连接时验证服务器身份，无需客户端证书。私有证书密钥不进入仓库。更换服务器证书后需更新内置公开证书并重新分发客户端，或通过 `--ca` 指定新的信任证书。
 

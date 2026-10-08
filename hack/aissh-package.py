@@ -59,7 +59,7 @@ def main():
             shutil.copyfile(ROOT / "deploy/aisshs.service", stage / "aisshs.service")
         (stage / "build-info.json").write_text(json.dumps({
             "version": args.version, "commit": commit, "os": args.os, "arch": args.arch,
-            "defaultServer": "149.88.87.82",
+            "defaultServer": "connect.builderopc.com",
         }, indent=2) + "\n", encoding="utf-8")
         if args.os == "windows":
             archive = output / (name + ".zip")

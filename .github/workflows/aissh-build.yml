@@ -154,7 +154,7 @@ jobs:
             tag=aissh-latest
             git tag --force "$tag" "$GITHUB_SHA"
             git push --force origin "refs/tags/$tag"
-            printf '自动构建的最新开发版。\n\n版本：%s\n提交：%s\n\n解压后运行 aisshc，默认连接 149.88.87.82。每个包包含 aisshc、aisshs、许可证和使用说明；校验值见 SHA256SUMS。\n' "$BUILD_VERSION" "$GITHUB_SHA" > "$RUNNER_TEMP/aissh-release-notes.md"
+            printf '自动构建的最新开发版。\n\n版本：%s\n提交：%s\n\n解压后运行 aisshc，默认连接 connect.builderopc.com。每个包包含 aisshc、aisshs、许可证和使用说明；校验值见 SHA256SUMS。\n' "$BUILD_VERSION" "$GITHUB_SHA" > "$RUNNER_TEMP/aissh-release-notes.md"
             if gh release view "$tag" >/dev/null 2>&1; then
               gh release edit "$tag" --title 'aissh 最新开发版' --notes-file "$RUNNER_TEMP/aissh-release-notes.md" --prerelease --latest=false
             else

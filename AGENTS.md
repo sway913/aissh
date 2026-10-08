@@ -9,7 +9,7 @@
 - Read `doc/aissh/upstream-sync.md` before importing upstream fixes.
 - Read `doc/aissh/release.md` for aissh CI, binary packaging and releases.
 - Device registration, hardware fingerprints, ACL management, and agent runtime live in `aissh/`.
-- Default server is `149.88.87.82`; the client uses automatic hardware registration without device private keys.
+- Default server is DNS-only `connect.builderopc.com`; the client uses automatic hardware registration without device private keys.
 - Run `go test -race -tags noweb ./aissh/... ./client/... ./server/...` for auth or tunnel changes.
 - Never commit `.aissh-server/`, server private keys, admin passwords, session tokens or live device databases.
 
