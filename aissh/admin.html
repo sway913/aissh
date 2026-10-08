@@ -4,7 +4,7 @@
 </style>
 <h1>aissh</h1><p>设备自动注册。由你决定谁可以访问谁；未授权的设备不能建立 SSH 隧道。</p><div id="message" role="status"></div>
 <section class="panel"><h2>设备</h2><table><thead><tr><th>设备</th><th>MAC 地址</th><th>状态</th><th>操作</th></tr></thead><tbody id="devices"></tbody></table></section>
-<section class="panel"><h2>添加访问权限</h2><form id="grant"><label>访问端 <select id="source" required></select></label><span>→</span><label>目标端 <select id="target" required></select></label><button class="primary" type="submit">允许访问</button></form><p>权限是单向的。客户端会自动创建本地 SSH 入口，无需填写密钥。</p></section>
+<section class="panel"><h2>添加访问权限</h2><form id="grant"><label>访问端 <select id="source" required></select></label><span>→</span><label>目标端 <select id="target" required></select></label><button id="allow" class="primary" type="submit">允许访问</button></form><p>权限是单向的。客户端会自动创建本地 SSH 入口，无需填写密钥。</p></section>
 <section class="panel"><h2>已授权连接</h2><table><thead><tr><th>访问端</th><th>目标端</th><th>访问端上的 SSH 命令</th><th>操作</th></tr></thead><tbody id="rules"></tbody></table></section>
 <script>
 const $=id=>document.getElementById(id);let state={devices:[],rules:[]};
@@ -14,7 +14,10 @@ async function api(path,body){const res=await fetch(path,body?{method:'POST',hea
 async function action(path,body){try{await api(path,body);$('message').textContent='';await refresh()}catch(e){$('message').textContent=e.message}}
 async function refresh(){try{state=await api('/api/state');render();$('message').textContent=''}catch(e){$('message').textContent=e.message}}
 function render(){const ds=$('devices');ds.replaceChildren();for(const d of state.devices){const row=document.createElement('tr');const name=text('div',d.name||d.id);name.append(text('small',d.id+' · '+d.os));cell(row,name);cell(row,d.macs.join(', '));const online=d.online;cell(row,!d.enabled?'已禁用':online?'在线':'离线');const b=text('button',d.enabled?'禁用':'启用');b.onclick=()=>action('/api/devices',{id:d.id,enabled:!d.enabled});cell(row,b);ds.append(row)}if(!state.devices.length){const row=document.createElement('tr');const td=cell(row,'暂无设备，请在电脑上运行 aisshc。');td.colSpan=4;ds.append(row)}
-for(const id of ['source','target']){const select=$(id),prev=select.value;select.replaceChildren();for(const d of state.devices.filter(d=>d.enabled)){const option=text('option',(d.name||'未命名')+' · '+d.id.slice(-8));option.value=d.id;select.append(option)}if([...select.options].some(o=>o.value===prev))select.value=prev}
+syncDeviceSelect($('source'),state.devices.filter(d=>d.enabled));syncTargets();
 const name=id=>state.devices.find(d=>d.id===id)?.name||id;const rules=$('rules');rules.replaceChildren();for(const r of state.rules){const row=document.createElement('tr');cell(row,name(r.source));cell(row,name(r.target));cell(row,text('code',`ssh -p ${r.port} 用户名@127.0.0.1`));const b=text('button','撤销');b.onclick=()=>action('/api/rules',{...r,port:undefined,allow:false});cell(row,b);rules.append(row)}}
-$('grant').onsubmit=e=>{e.preventDefault();action('/api/rules',{source:$('source').value,target:$('target').value,allow:true})};refresh();setInterval(refresh,5000);
+function syncDeviceSelect(select,devices){const options=devices.map(d=>({value:d.id,label:(d.name||'未命名')+' · '+d.id.slice(-8)}));const current=[...select.options].map(o=>({value:o.value,label:o.textContent}));if(JSON.stringify(current)===JSON.stringify(options))return;const prev=select.value;select.replaceChildren();for(const o of options){const option=text('option',o.label);option.value=o.value;select.append(option)}if(options.some(o=>o.value===prev))select.value=prev}
+function syncTargets(){const source=$('source').value;syncDeviceSelect($('target'),state.devices.filter(d=>d.enabled&&d.id!==source));$('allow').disabled=!source||!$('target').value}
+$('source').onchange=syncTargets;
+$('grant').onsubmit=e=>{e.preventDefault();const source=$('source').value,target=$('target').value;if(!source||!target||source===target){$('message').textContent='请选择两台不同的设备';return}action('/api/rules',{source,target,allow:true})};refresh();setInterval(refresh,5000);
 </script></html>
