@@ -141,6 +141,20 @@ func AdminHandler(s *Store, password string) http.Handler {
 		s.RevokeConnections()
 		respond(w, 200, map[string]bool{"ok": true})
 	})
+	mux.HandleFunc("POST /api/devices/delete", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			ID string `json:"id"`
+		}
+		if e := decode(w, r, &body); e != nil {
+			fail(w, 400, "invalid request")
+			return
+		}
+		if e := s.DeleteDevice(body.ID); e != nil {
+			fail(w, 400, e.Error())
+			return
+		}
+		respond(w, 200, map[string]bool{"ok": true})
+	})
 	mux.HandleFunc("POST /api/rules", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Source string `json:"source"`

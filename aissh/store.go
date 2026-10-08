@@ -262,6 +262,41 @@ func (s *Store) SetEnabled(id string, enabled bool) error {
 	}
 	return nil
 }
+
+// DeleteDevice removes the device and both directions of its permissions.
+// Sessions and active tunnels are revoked only after the database is saved.
+func (s *Store) DeleteDevice(id string) error {
+	s.mu.Lock()
+	d := s.state.Devices[id]
+	if d == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("unknown device")
+	}
+	oldRules := s.state.Rules
+	rules := make([]Rule, 0, len(oldRules))
+	for _, r := range oldRules {
+		if r.Source != id && r.Target != id {
+			rules = append(rules, r)
+		}
+	}
+	delete(s.state.Devices, id)
+	s.state.Rules = rules
+	if err := s.saveLocked(); err != nil {
+		s.state.Devices[id] = d
+		s.state.Rules = oldRules
+		s.mu.Unlock()
+		return err
+	}
+	for rid, v := range s.sessions {
+		if v.DeviceID == id {
+			delete(s.sessions, rid)
+		}
+	}
+	s.mu.Unlock()
+	s.RevokeConnections()
+	return nil
+}
+
 func (s *Store) SetRule(source, target string, allow bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
