@@ -54,6 +54,24 @@ func darwinStartupPlist(c StartupConfig) string {
 </dict></plist>`
 }
 func (b *darwinStartup) install(c StartupConfig) error {
+	// launchd opens these streams as the configured user, whose account cannot
+	// create files in the root-owned installation directory.
+	dir, _, _ := startupPaths("darwin")
+	path := dir + "/client.log"
+	if st, err := os.Lstat(path); err == nil && st.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing startup log symlink %s", path)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		return err
+	}
+	if err = f.Chown(c.UID, c.GID); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
 	return os.WriteFile(startupPlistPath, []byte(darwinStartupPlist(c)), 0644)
 }
 func (b *darwinStartup) start() error {
