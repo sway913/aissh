@@ -1,0 +1,22 @@
+# Independent product build; keep the upstream Makefile available for syncing.
+LDFLAGS ?= -s -w
+NOWEB_TAG = $(shell [ ! -d web/frps/dist ] || [ ! -d web/frpc/dist ] && echo ',noweb')
+
+.PHONY: build aisshs aisshc web test clean
+
+build: aisshs aisshc
+
+aisshs:
+	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -tags "frps$(NOWEB_TAG)" -o bin/aisshs ./cmd/frps
+
+aisshc:
+	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -tags "frpc$(NOWEB_TAG)" -o bin/aisshc ./cmd/frpc
+
+web:
+	$(MAKE) -f Makefile web
+
+test:
+	$(MAKE) -f Makefile test
+
+clean:
+	rm -f bin/aisshs bin/aisshc

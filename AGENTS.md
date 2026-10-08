@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## aissh Fork
+
+- Product repository: `github.com/sway913/aissh`; official frp is the `upstream` remote.
+- Build product binaries with `make -f Makefile.aissh build` (`bin/aisshs`, `bin/aisshc`).
+- Keep upstream module paths and internal protocol/config names to reduce merge conflicts.
+- Put custom management functionality in an independent `aissh/` directory where practical.
+- Read `doc/aissh/upstream-sync.md` before importing upstream fixes.
+- The centralized aissh management backend is planned and has not been implemented yet.
+
 ## Development Commands
 
 ### Build

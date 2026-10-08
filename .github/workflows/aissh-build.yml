@@ -1,0 +1,23 @@
+name: aissh build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make -f Makefile.aissh build
+      - run: ./bin/aisshs --help && ./bin/aisshc --help
+      - run: go test -tags noweb ./cmd/...

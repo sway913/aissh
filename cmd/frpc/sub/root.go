@@ -57,8 +57,8 @@ func init() {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "frpc",
-	Short: "frpc is the client of frp (https://github.com/fatedier/frp)",
+	Use:   "aisshc",
+	Short: "aisshc is the client of aissh (https://github.com/sway913/aissh)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if showVersion {
 			fmt.Println(version.Full())
