@@ -109,7 +109,9 @@ jobs:
           run_client --service status | grep 'installed=true enabled=true running=true'
       - name: Verify background client reaches registration
         run: |
-          for attempt in {1..20}; do
+          for ((attempt=0; attempt<20; attempt++)); do
+            # PowerShell must expand its own environment variable.
+            # shellcheck disable=SC2016
             case "$RUNNER_OS" in
               Linux) output=$(sudo journalctl -u aisshc --no-pager -n 50) ;;
               macOS) output=$(sudo cat '/Library/Application Support/aissh/client.log' 2>/dev/null || true) ;;
@@ -124,6 +126,8 @@ jobs:
       - name: Diagnose startup failure
         if: failure()
         run: |
+          # PowerShell must expand its own environment variable.
+          # shellcheck disable=SC2016
           case "$RUNNER_OS" in
             Linux) sudo journalctl -u aisshc --no-pager -n 50 ;;
             macOS)
