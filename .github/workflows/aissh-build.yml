@@ -1,8 +1,9 @@
-name: aissh build
+name: aissh CI and Release
 
 on:
   push:
     branches: [main]
+    tags: ['aissh-v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -10,15 +11,163 @@ on:
 permissions:
   contents: read
 
+# Keep main/release publishing serial; a newer push must not cancel asset uploads.
+concurrency:
+  group: aissh-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  build:
+  test:
+    name: Format, vet and tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      package-version: ${{ steps.metadata.outputs.package-version }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - run: make -f Makefile.aissh build
-      - run: ./bin/aisshs --help && ./bin/aisshc --help
-      - run: go test -race -tags noweb ./aissh/... ./client/... ./server/...
-      - run: go test -tags noweb ./cmd/...
+      - name: Resolve build version
+        id: metadata
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^aissh-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+              echo 'Expected aissh-vMAJOR.MINOR.PATCH or aissh-vMAJOR.MINOR.PATCH-rc.N' >&2
+              exit 1
+            fi
+            version="${GITHUB_REF_NAME#aissh-}"
+            package_version="$version"
+          else
+            version="dev-${GITHUB_SHA:0:8}"
+            package_version=latest
+          fi
+          printf 'version=%s\npackage-version=%s\n' "$version" "$package_version" >> "$GITHUB_OUTPUT"
+      - name: Check aissh formatting
+        run: |
+          files=$(gofmt -l aissh cmd/aisshc cmd/aisshs server/aissh_hooks.go)
+          if [[ -n "$files" ]]; then
+            printf '%s\n' "$files"
+            exit 1
+          fi
+      - name: Validate workflow
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/aissh-build.yml
+      - name: Vet
+        run: go vet -tags noweb ./aissh/... ./cmd/... ./client/... ./server/... ./pkg/...
+      - name: Unit and SSH authorization integration tests
+        run: go test -race -tags noweb ./aissh/... ./client/... ./server/... ./pkg/... ./cmd/... ./assets/...
+      - name: Build native commands
+        run: make -f Makefile.aissh build
+      - name: Command smoke tests
+        run: |
+          ./bin/aisshs --help
+          ./bin/aisshc --help
+          ./bin/aisshs --version
+          ./bin/aisshc --version
+
+  package:
+    name: Package ${{ matrix.os }}-${{ matrix.arch }}
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+          - os: windows
+            arch: amd64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build and package
+        env:
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          BUILD_VERSION: ${{ needs.test.outputs.version }}
+          PACKAGE_VERSION: ${{ needs.test.outputs.package-version }}
+        run: |
+          python3 hack/aissh-package.py \
+            --os "$TARGET_OS" --arch "$TARGET_ARCH" \
+            --version "$BUILD_VERSION" --package-version "$PACKAGE_VERSION" \
+            --commit "$GITHUB_SHA"
+      - name: Upload downloadable build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aissh-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/aissh/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  release:
+    name: Publish binaries
+    needs: [test, package]
+    if: github.repository == 'sway913/aissh' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/aissh-v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aissh-*
+          path: dist/aissh
+          merge-multiple: true
+      - name: Verify packages and write combined checksums
+        working-directory: dist/aissh
+        run: |
+          shopt -s nullglob
+          checksums=(*.sha256)
+          [[ "${#checksums[@]}" -eq 5 ]]
+          for checksum in "${checksums[@]}"; do
+            sha256sum --check "$checksum"
+          done
+          cat "${checksums[@]}" | sort -k2 > SHA256SUMS
+      - name: Publish latest development binaries or versioned release
+        env:
+          BUILD_VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          shopt -s nullglob
+          assets=(dist/aissh/*.tar.gz dist/aissh/*.zip dist/aissh/SHA256SUMS)
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            tag=aissh-latest
+            git tag --force "$tag" "$GITHUB_SHA"
+            git push --force origin "refs/tags/$tag"
+            printf '自动构建的最新开发版。\n\n版本：%s\n提交：%s\n\n解压后运行 aisshc，默认连接 149.88.87.82。每个包包含 aisshc、aisshs、许可证和使用说明；校验值见 SHA256SUMS。\n' "$BUILD_VERSION" "$GITHUB_SHA" > "$RUNNER_TEMP/aissh-release-notes.md"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              gh release edit "$tag" --title 'aissh 最新开发版' --notes-file "$RUNNER_TEMP/aissh-release-notes.md" --prerelease --latest=false
+            else
+              gh release create "$tag" --verify-tag --title 'aissh 最新开发版' --notes-file "$RUNNER_TEMP/aissh-release-notes.md" --prerelease --latest=false
+            fi
+            gh release upload "$tag" "${assets[@]}" --clobber
+          else
+            tag="$GITHUB_REF_NAME"
+            prerelease=false
+            if [[ "$BUILD_VERSION" == *-* ]]; then prerelease=true; fi
+            if ! gh release view "$tag" >/dev/null 2>&1; then
+              gh release create "$tag" --verify-tag --title "aissh $BUILD_VERSION" --generate-notes --draft
+            fi
+            gh release upload "$tag" "${assets[@]}" --clobber
+            gh release edit "$tag" --draft=false --prerelease="$prerelease" --latest="$([[ "$prerelease" == false ]] && echo true || echo false)"
+          fi

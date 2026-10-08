@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"github.com/fatedier/frp/aissh"
 	"log"
 	"os"
@@ -23,7 +24,12 @@ func main() {
 	flag.IntVar(&o.SSHPort, "ssh-port", 22, "local SSH service port")
 	flag.StringVar(&o.CAFile, "ca", "", "custom server CA certificate; default uses bundled server certificate")
 	flag.StringVar(&o.StateDir, "state-dir", filepath.Join(home, "aissh"), "local runtime directory (no device private key)")
+	showVersion := flag.Bool("version", false, "print aissh version and commit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(aissh.VersionString())
+		return
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if e := aissh.RunAgent(ctx, o); e != nil {

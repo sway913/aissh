@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"github.com/fatedier/frp/aissh"
 	"log"
 	"os"
@@ -18,7 +19,12 @@ func main() {
 	flag.IntVar(&o.TunnelPort, "tunnel-port", 17000, "frp TLS tunnel port")
 	initTLS := flag.Bool("init-tls", false, "initialize TLS certificate and exit")
 	host := flag.String("host", aissh.DefaultHost, "server IP or hostname for --init-tls")
+	showVersion := flag.Bool("version", false, "print aissh version and commit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(aissh.VersionString())
+		return
+	}
 	if *initTLS {
 		if e := aissh.InitTLS(o.DataDir, *host); e != nil {
 			log.Fatal(e)

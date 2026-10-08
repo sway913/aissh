@@ -1,5 +1,9 @@
 # aissh
 
+[![CI](https://github.com/sway913/aissh/actions/workflows/aissh-build.yml/badge.svg)](https://github.com/sway913/aissh/actions/workflows/aissh-build.yml)
+
+[最新开发版二进制](https://github.com/sway913/aissh/releases/tag/aissh-latest) · [全部 Releases](https://github.com/sway913/aissh/releases)
+
 基于 [fatedier/frp](https://github.com/fatedier/frp) 的个人远程 SSH 管理工具。两台电脑都不需要公网 IP；默认通过香港服务器 `149.88.87.82` 中转。
 
 ## 使用
@@ -73,3 +77,14 @@ go test -race -tags noweb ./aissh/... ./client/... ./server/...
 保留完整 frp Git 历史、Apache-2.0 许可证和版权声明。Go module 及内部协议沿用 `github.com/fatedier/frp`，减少同步冲突。
 
 自定义代码集中在 `aissh/`、`cmd/aisshs/`、`cmd/aisshc/`；服务端通过进程内插件和 visitor admission hook 接入权限。官方功能说明保留在 [原版 README](README.frp.md) 和 [中文文档](README_zh.md)。同步流程见 [上游同步指南](doc/aissh/upstream-sync.md)。
+
+## 自动 CI 与二进制发布
+
+- 提交到 `main`、创建指向 `main` 的 PR 或手动运行 Actions，自动执行格式检查、vet、竞态测试及 SSH 权限链路测试，并构建五个平台下载包。
+- PR 和每次运行的二进制可在 Actions 的 Artifacts 下载，保留 14 天。
+- `main` 的测试与全部平台构建成功后，自动更新 `aissh-latest` 开发版 Release，免登录即可下载。
+- 推送 `aissh-vMAJOR.MINOR.PATCH` 标签会自动发布正式版本；带 `-rc.N` 的标签发布预发布版。
+- 平台包括 Linux amd64/arm64、macOS Intel/Apple Silicon、Windows amd64。每个包包含 `aisshc`、`aisshs` 和使用说明，并附 `SHA256SUMS`。
+- 发布使用仓库内置的 `GITHUB_TOKEN`，无需设置 PAT、服务器 SSH 密钥或原版 `GPR_TOKEN`；不会自动更新香港服务器上正在运行的服务。
+
+正式发布步骤与本地打包方法见 [aissh 发布指南](doc/aissh/release.md)。
