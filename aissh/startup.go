@@ -38,8 +38,12 @@ type startupCommand func(string, ...string) ([]byte, error)
 
 func runStartupCommand(name string, args ...string) ([]byte, error) {
 	c := exec.Command(name, args...)
-	out, err := c.CombinedOutput()
+	out, err := c.Output()
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			out = append(out, exitErr.Stderr...)
+		}
 		return out, fmt.Errorf("%s: %w: %s", name, err, out)
 	}
 	return out, nil

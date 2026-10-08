@@ -107,6 +107,18 @@ jobs:
           run_client
           run_client --service update --api-url https://127.0.0.1:1 --server 127.0.0.1
           run_client --service status | grep 'installed=true enabled=true running=true'
+      - name: Diagnose startup failure
+        if: failure()
+        run: |
+          case "$RUNNER_OS" in
+            Linux) sudo journalctl -u aisshc --no-pager -n 50 ;;
+            macOS)
+              sudo launchctl print system/com.builderopc.aisshc || true
+              sudo cat '/Library/Application Support/aissh/client.log' || true
+              sudo cat /Library/LaunchDaemons/com.builderopc.aisshc.plist || true
+              ;;
+            Windows) powershell.exe -NoProfile -Command "Get-ScheduledTask -TaskName aisshc | Format-List *; Get-ScheduledTaskInfo -TaskName aisshc | Format-List *; Get-Content \"\$env:ProgramData\aissh\client.log\" -ErrorAction SilentlyContinue" ;;
+          esac
       - name: Remove test startup registration
         if: always()
         run: |

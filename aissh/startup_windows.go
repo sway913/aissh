@@ -30,7 +30,7 @@ func psEncoded(s string) string {
 }
 func (b *windowsStartup) ps(s string) ([]byte, error) {
 	exe := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-	return b.run(exe, "-NoProfile", "-NonInteractive", "-EncodedCommand", psEncoded("$ErrorActionPreference='Stop'; "+s))
+	return b.run(exe, "-NoProfile", "-NonInteractive", "-EncodedCommand", psEncoded("$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; "+s))
 }
 func (b *windowsStartup) status() (startupStatus, error) {
 	out, err := b.ps(`$t=Get-ScheduledTask -TaskName 'aisshc' -TaskPath '\' -ErrorAction SilentlyContinue; if($null -eq $t){'{}'}else{@{Installed=$true;Running=($t.State -eq 'Running');Enabled=($t.State -ne 'Disabled')}|ConvertTo-Json -Compress}`)
