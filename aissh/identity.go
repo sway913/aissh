@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -89,7 +90,7 @@ func DetectFingerprint() (Fingerprint, error) {
 			}
 		}
 	case "darwin":
-		if b, e := exec.Command("ioreg", "-rd1", "-c", "IOPlatformExpertDevice").Output(); e == nil {
+		if b, e := exec.Command("/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice").Output(); e == nil {
 			for _, line := range strings.Split(string(b), "\n") {
 				if strings.Contains(line, "\"IOPlatformUUID\"") {
 					parts := strings.SplitN(line, "=", 2)
@@ -100,7 +101,7 @@ func DetectFingerprint() (Fingerprint, error) {
 			}
 		}
 	case "windows":
-		if b, e := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance Win32_ComputerSystemProduct).UUID").Output(); e == nil {
+		if b, e := exec.Command(filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance Win32_ComputerSystemProduct).UUID").Output(); e == nil {
 			add("platform-uuid", string(b))
 		}
 	}

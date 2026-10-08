@@ -53,7 +53,8 @@ def main():
             target.chmod(0o755)
         # Explicit allowlist: no cert private key, admin password, database or user config.
         for source, destination in [("LICENSE", "LICENSE"), ("README.md", "README.md"),
-                                    ("doc/aissh/deployment.md", "deployment.md")]:
+                                    ("doc/aissh/deployment.md", "deployment.md"),
+                                    ("doc/aissh/client-startup.md", "client-startup.md")]:
             shutil.copyfile(ROOT / source, stage / destination)
         if args.os == "linux":
             shutil.copyfile(ROOT / "deploy/aisshs.service", stage / "aisshs.service")

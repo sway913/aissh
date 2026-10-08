@@ -70,9 +70,51 @@ jobs:
           ./bin/aisshs --version
           ./bin/aisshc --version
 
+  startup:
+    name: Startup lifecycle ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Native startup unit tests
+        run: go test -tags noweb ./aissh/... -run 'Test.*Startup|TestWindowsScheduledTask|TestDarwinLaunchDaemon'
+      - name: Build startup client
+        run: go build -tags noweb -o bin/startup-client.exe ./cmd/aisshc
+      - name: Verify boot registration, idempotency, recovery and update
+        run: |
+          run_client() {
+            if [[ "$RUNNER_OS" == Windows ]]; then ./bin/startup-client.exe "$@"; else sudo ./bin/startup-client.exe "$@"; fi
+          }
+          # Loopback-only API: lifecycle tests never register with production.
+          run_client --api-url https://127.0.0.1:1 --server 127.0.0.1
+          run_client --service status | tee startup-status.txt
+          grep 'installed=true enabled=true running=true' startup-status.txt
+          # Existing configuration must survive an ordinary second invocation.
+          run_client | tee startup-repeat.txt
+          grep 'already registered and running' startup-repeat.txt
+          case "$RUNNER_OS" in
+            Linux) sudo systemctl stop aisshc.service ;;
+            macOS) sudo launchctl bootout system/com.builderopc.aisshc ;;
+            Windows) powershell.exe -NoProfile -Command "Stop-ScheduledTask -TaskName aisshc; Start-Sleep -Seconds 2" ;;
+          esac
+          run_client
+          run_client --service update --api-url https://127.0.0.1:1 --server 127.0.0.1
+          run_client --service status | grep 'installed=true enabled=true running=true'
+      - name: Remove test startup registration
+        if: always()
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then ./bin/startup-client.exe --service uninstall; else sudo ./bin/startup-client.exe --service uninstall; fi
+
   package:
     name: Package ${{ matrix.os }}-${{ matrix.arch }}
-    needs: test
+    needs: [test, startup]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -154,7 +196,7 @@ jobs:
             tag=aissh-latest
             git tag --force "$tag" "$GITHUB_SHA"
             git push --force origin "refs/tags/$tag"
-            printf '自动构建的最新开发版。\n\n版本：%s\n提交：%s\n\n解压后运行 aisshc，默认连接 connect.builderopc.com。每个包包含 aisshc、aisshs、许可证和使用说明；校验值见 SHA256SUMS。\n' "$BUILD_VERSION" "$GITHUB_SHA" > "$RUNNER_TEMP/aissh-release-notes.md"
+            printf '自动构建的最新开发版。\n\n版本：%s\n提交：%s\n\n首次以管理员权限运行 aisshc，自动安装开机自启（Linux/macOS 使用 sudo）。注册入口 https://sshapi.builderopc.com，隧道 connect.builderopc.com:17000。每个包包含 aisshc、aisshs、许可证和使用说明；校验值见 SHA256SUMS。\n' "$BUILD_VERSION" "$GITHUB_SHA" > "$RUNNER_TEMP/aissh-release-notes.md"
             if gh release view "$tag" >/dev/null 2>&1; then
               gh release edit "$tag" --title 'aissh 最新开发版' --notes-file "$RUNNER_TEMP/aissh-release-notes.md" --prerelease --latest=false
             else

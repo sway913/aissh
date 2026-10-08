@@ -24,6 +24,7 @@ import (
 type AgentOptions struct {
 	Host, APIURL, CAFile, StateDir string
 	TunnelPort, SSHPort            int
+	ManagedIdentity                *StartupConfig `json:"-"`
 }
 type apiError struct{ Status int }
 
@@ -113,9 +114,15 @@ func RunAgent(ctx context.Context, o AgentOptions) error {
 	if e != nil {
 		return fmt.Errorf("identify hardware: %w", e)
 	}
+	if o.ManagedIdentity != nil && runtime.GOOS == "windows" {
+		fp.Hardware = o.ManagedIdentity.Hardware
+	}
 	id, _ := fp.ID()
 	name, _ := os.Hostname()
 	username, account, accountErr := detectAccount(runtime.GOOS, name)
+	if o.ManagedIdentity != nil && runtime.GOOS == "windows" {
+		username, account, accountErr = o.ManagedIdentity.Username, o.ManagedIdentity.Account, nil
+	}
 	if accountErr != nil {
 		log.Printf("unable to read system account: %v", accountErr)
 	} else {

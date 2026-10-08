@@ -41,7 +41,7 @@ systemctl status aisshs
 
 ## 客户端
 
-macOS、Linux、Windows 均支持。Windows 对应 `aisshc.exe`。客户端启动时自动注册；目标系统必须启用 SSH 服务。不要同时在同一台电脑启动多个 aisshc：新注册会取代旧会话。
+macOS、Linux、Windows 均支持。Windows 对应 `aisshc.exe`。客户端普通执行时检查并安装开机自启，安装需要管理员权限；系统任务启动客户端后自动注册。详见 [自启说明](client-startup.md)。目标系统必须启用 SSH 服务。不要同时在同一台电脑启动多个 aisshc：新注册会取代旧会话。
 
 当前权限配置最多约 10 秒同步，撤销在服务器立即生效，并有 1 秒周期检查作为兜底。授权撤销会中断已有 SSH 会话。客户端本地 visitor 端口从 22000 开始分配；若被其他程序占用，需要先释放对应端口。
 
