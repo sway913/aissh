@@ -11,9 +11,9 @@ on:
 permissions:
   contents: read
 
-# Keep main/release publishing serial; a newer push must not cancel asset uploads.
+# Test each revision independently; serialize only the release upload job.
 concurrency:
-  group: aissh-${{ github.ref }}
+  group: aissh-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
@@ -77,7 +77,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-15-intel]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -188,6 +188,9 @@ jobs:
     if: github.repository == 'sway913/aissh' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/aissh-v'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: aissh-publish-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write
     env:
@@ -219,6 +222,12 @@ jobs:
           shopt -s nullglob
           assets=(dist/aissh/*.tar.gz dist/aissh/*.zip dist/aissh/SHA256SUMS)
           if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            # A slow older revision must not replace a newer development build.
+            current_main=$(git ls-remote origin refs/heads/main | cut -f1)
+            if [[ "$current_main" != "$GITHUB_SHA" ]]; then
+              echo 'Skipping development release because main has advanced.'
+              exit 0
+            fi
             tag=aissh-latest
             git tag --force "$tag" "$GITHUB_SHA"
             git push --force origin "refs/tags/$tag"
