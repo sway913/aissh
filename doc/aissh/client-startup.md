@@ -48,3 +48,16 @@ Linux/macOS 以安装者的原始用户运行，`sudo` 的原用户由 `SUDO_USE
 ```
 
 `--service-run` 是供系统任务使用的内部入口，加载固定安装目录中的配置，不执行安装流程。服务显示 running 只表示进程运行；设备联网、注册、隧道连接及目标 SSH 是否正常，应结合客户端日志和管理后台检查。
+
+## Windows 硬件指纹采集失败
+
+客户端优先从系统网卡接口读取 MAC；Windows 接口枚举失败或没有可用 MAC 时，会通过 PowerShell 的 CIM 网卡查询再尝试一次（最多等待 10 秒）。保留原有 MAC 优先级和设备 ID 算法。
+
+仍无法获取时，会提示 `no usable MAC address found` 或具体的 Windows 查询错误。请检查网卡和驱动状态：
+
+```powershell
+Get-NetAdapter -IncludeHidden | Select-Object Name,Status,MacAddress
+Get-CimInstance Win32_NetworkAdapter | Select-Object Name,MACAddress
+```
+
+客户端不会用随机数或计算机名替代 MAC 注册。安装自启失败的机器下载新版后，以管理员身份重新执行 `.\aisshc.exe`；已经安装的使用 `.\aisshc.exe --service update`。

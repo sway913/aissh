@@ -64,3 +64,14 @@ func TestWindowsStartupDirectoryProtection(t *testing.T) {
 		}
 	}
 }
+
+// Force the fallback on a real Windows runner even if Go can enumerate its NICs.
+func TestWindowsStartupHardwareFallback(t *testing.T) {
+	macs, err := detectFingerprintMACs("windows", nil, nil, windowsFingerprintMACs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = (Fingerprint{MACs: macs}).ID(); err != nil {
+		t.Fatal(err)
+	}
+}
