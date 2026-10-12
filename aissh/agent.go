@@ -113,9 +113,15 @@ func RunAgent(ctx context.Context, o AgentOptions) error {
 		return fmt.Errorf("invalid local SSH port")
 	}
 	o.APIURL = base
+	managedRun := o.ManagedIdentity != nil
 	o, e = ResolveAgentIdentityOptions(o)
 	if e != nil {
 		return e
+	}
+	if !managedRun && !o.StateDirExplicit && o.ManagedIdentity != nil {
+		if e = checkForegroundStartup(newStartupBackend(runStartupCommand)); e != nil {
+			return e
+		}
 	}
 	if e = adoptIdentityUser(o.ManagedIdentity); e != nil {
 		return e

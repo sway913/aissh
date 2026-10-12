@@ -414,3 +414,12 @@ func TestBindingReclaimsLegacyConnectionsAndReplicaSessions(t *testing.T) {
 		t.Fatalf("bound credential did not reconnect: %v", err)
 	}
 }
+
+func TestForegroundRejectsLegacyServiceWithoutIdentityLock(t *testing.T) {
+	if err := checkForegroundStartup(&fakeStartup{state: startupStatus{Installed: true, Running: true, Enabled: true}}); err == nil {
+		t.Fatal("foreground started alongside pre-credential service")
+	}
+	if err := checkForegroundStartup(&fakeStartup{state: startupStatus{Installed: true}}); err != nil {
+		t.Fatal(err)
+	}
+}

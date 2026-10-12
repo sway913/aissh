@@ -365,3 +365,14 @@ func copyStartupIdentity(source, dest, authority string) error {
 	// service is installed, normal foreground execution resolves its state-dir.
 	return os.Remove(identityPath(source))
 }
+
+func checkForegroundStartup(backend startupBackend) error {
+	s, err := backend.status()
+	if err != nil {
+		return err
+	}
+	if s.Running {
+		return fmt.Errorf("aisshc background service is running; stop it before using --foreground (the installed service owns this device identity)")
+	}
+	return nil
+}
