@@ -1,0 +1,11 @@
+.git
+.aissh-server
+**/devices.json
+**/federation.json
+**/policy-cache.json
+**/policy-signing.key
+**/server.key
+**/admin-password
+bin
+dist
+node_modules

@@ -1,6 +1,7 @@
 package aissh
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -25,17 +26,18 @@ const DefaultTunnelPort = 17000
 var ErrDenied = errors.New("device or session disabled, expired, or unknown")
 
 type Device struct {
-	ID       string    `json:"id"`
-	Name     string    `json:"name"`
-	Username string    `json:"username,omitempty"`
-	Account  string    `json:"account,omitempty"`
-	OS       string    `json:"os"`
-	MACs     []string  `json:"macs"`
-	Enabled  bool      `json:"enabled"`
-	Online   bool      `json:"online"`
-	Created  time.Time `json:"created"`
-	LastSeen time.Time `json:"lastSeen"`
-	Secret   string    `json:"secret,omitempty"`
+	ID       string          `json:"id"`
+	Name     string          `json:"name"`
+	Username string          `json:"username,omitempty"`
+	Account  string          `json:"account,omitempty"`
+	OS       string          `json:"os"`
+	MACs     []string        `json:"macs"`
+	Enabled  bool            `json:"enabled"`
+	Online   bool            `json:"online"`
+	Created  time.Time       `json:"created"`
+	LastSeen time.Time       `json:"lastSeen"`
+	Secret   string          `json:"secret,omitempty"`
+	Tunnels  map[string]bool `json:"tunnels,omitempty"`
 }
 type Rule struct {
 	Source string `json:"source"`
@@ -43,8 +45,9 @@ type Rule struct {
 	Port   int    `json:"port"`
 }
 type state struct {
-	Devices map[string]*Device `json:"devices"`
-	Rules   []Rule             `json:"rules"`
+	Revision uint64             `json:"revision,omitempty"`
+	Devices  map[string]*Device `json:"devices"`
+	Rules    []Rule             `json:"rules"`
 }
 type session struct {
 	DeviceID, Token string
@@ -52,6 +55,20 @@ type session struct {
 }
 type tracked struct{ Source, Target, RunID string }
 type Store struct {
+	replica             bool
+	leaseExpires        time.Time
+	leaseIssued         time.Time
+	nodes               []Node
+	nodeID              string
+	tunnelOnline        func(string) bool
+	reports             map[string]NodeReport
+	heartbeats          map[string]time.Time
+	registrations       map[string]Registration
+	signingKey          []byte
+	federation          *FederationConfig
+	forwardRegistration func(context.Context, Registration) error
+	clock               func() time.Time
+
 	mu          sync.Mutex
 	path        string
 	state       state
@@ -71,7 +88,7 @@ func OpenStore(dir string) (*Store, error) {
 	if e := os.MkdirAll(dir, 0700); e != nil {
 		return nil, e
 	}
-	s := &Store{path: filepath.Join(dir, "devices.json"), state: state{Devices: map[string]*Device{}, Rules: []Rule{}}, sessions: map[string]session{}, connections: map[net.Conn]tracked{}}
+	s := &Store{path: filepath.Join(dir, "devices.json"), state: state{Devices: map[string]*Device{}, Rules: []Rule{}}, sessions: map[string]session{}, connections: map[net.Conn]tracked{}, reports: map[string]NodeReport{}, registrations: map[string]Registration{}, heartbeats: map[string]time.Time{}}
 	b, e := os.ReadFile(s.path)
 	if e == nil {
 		if e = json.Unmarshal(b, &s.state); e != nil {
@@ -86,6 +103,14 @@ func OpenStore(dir string) (*Store, error) {
 	return s, nil
 }
 func (s *Store) saveLocked() error {
+	previous := s.state.Revision
+	s.state.Revision++
+	committed := false
+	defer func() {
+		if !committed {
+			s.state.Revision = previous
+		}
+	}()
 	b, e := json.MarshalIndent(s.state, "", "  ")
 	if e != nil {
 		return e
@@ -108,7 +133,11 @@ func (s *Store) saveLocked() error {
 	if e != nil {
 		return e
 	}
-	return os.Rename(f.Name(), s.path)
+	if e = os.Rename(f.Name(), s.path); e != nil {
+		return e
+	}
+	committed = true
+	return nil
 }
 
 type Registration struct {
@@ -125,39 +154,56 @@ type Grant struct {
 	Secret string `json:"secret"`
 }
 type DeviceConfig struct {
-	ID      string    `json:"id"`
-	Token   string    `json:"token,omitempty"`
-	Expires time.Time `json:"expires"`
-	Secret  string    `json:"secret"`
-	Grants  []Grant   `json:"grants"`
+	ID             string    `json:"id"`
+	Token          string    `json:"token,omitempty"`
+	Expires        time.Time `json:"expires"`
+	Secret         string    `json:"secret"`
+	Grants         []Grant   `json:"grants"`
+	Nodes          []Node    `json:"nodes,omitempty"`
+	PolicyRevision uint64    `json:"policyRevision,omitempty"`
+	PolicyIssued   time.Time `json:"policyIssued,omitempty"`
+	PolicyExpires  time.Time `json:"policyExpires,omitempty"`
 }
 
-func (s *Store) Register(r Registration) (DeviceConfig, error) {
+var ErrUnknownDevice = errors.New("device is not in the synchronized policy")
+
+func (s *Store) now() time.Time {
+	if s.clock != nil {
+		return s.clock().UTC()
+	}
+	return time.Now().UTC()
+}
+func (s *Store) leaseValidLocked() bool { return !s.replica || s.now().Before(s.leaseExpires) }
+func validRegistration(r Registration) (string, error) {
 	id, e := r.Fingerprint.ID()
 	if e != nil {
-		return DeviceConfig{}, e
+		return "", e
 	}
 	if len(r.Name) > 128 || len(r.OS) > 32 || len(r.Username) > 256 || len(r.Account) > 256 || strings.ContainsFunc(r.Username+r.Account, unicode.IsControl) {
-		return DeviceConfig{}, fmt.Errorf("invalid device details")
+		return "", fmt.Errorf("invalid device details")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	return id, nil
+}
+func (s *Store) upsertLocked(r Registration, id string) (*Device, error) {
+	now := s.now()
 	d := s.state.Devices[id]
 	if d != nil && !d.Enabled {
-		return DeviceConfig{}, ErrDenied
+		return nil, ErrDenied
 	}
-	now := time.Now().UTC()
 	if d == nil {
+		if s.replica {
+			return nil, ErrUnknownDevice
+		}
 		if len(s.state.Devices) >= 1000 {
-			return DeviceConfig{}, fmt.Errorf("device limit reached")
+			return nil, fmt.Errorf("device limit reached")
 		}
 		d = &Device{ID: id, Name: r.Name, Username: r.Username, Account: r.Account, OS: r.OS, MACs: append([]string(nil), r.Fingerprint.MACs...), Enabled: true, Created: now, LastSeen: now, Secret: randomSecret()}
 		s.state.Devices[id] = d
-		if e = s.saveLocked(); e != nil {
+		if e := s.saveLocked(); e != nil {
 			delete(s.state.Devices, id)
-			return DeviceConfig{}, e
+			return nil, e
 		}
-	} else {
+	} else if !s.replica {
 		old := *d
 		d.Name, d.OS = r.Name, r.OS
 		// Older clients omit these fields; keep previously reported account details.
@@ -168,20 +214,53 @@ func (s *Store) Register(r Registration) (DeviceConfig, error) {
 			d.Account = r.Account
 		}
 		if d.Name != old.Name || d.OS != old.OS || d.Username != old.Username || d.Account != old.Account {
-			if e = s.saveLocked(); e != nil {
+			if e := s.saveLocked(); e != nil {
 				*d = old
-				return DeviceConfig{}, e
+				return nil, e
 			}
 		}
 	}
+
 	d.LastSeen = now
-	// Every startup gets a new temporary credential. It is never written to disk by the agent.
+	return d, nil
+}
+func (s *Store) noteRegistration(r Registration) error {
+	id, e := validRegistration(r)
+	if e != nil {
+		return e
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, e = s.upsertLocked(r, id)
+	return e
+}
+func (s *Store) Register(r Registration) (DeviceConfig, error) {
+	id, e := validRegistration(r)
+	if e != nil {
+		return DeviceConfig{}, e
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.leaseValidLocked() {
+		return DeviceConfig{}, ErrDenied
+	}
+	_, e = s.upsertLocked(r, id)
+	if e != nil {
+		return DeviceConfig{}, e
+	}
+	if s.replica {
+		s.registrations[id] = r
+		s.heartbeats[id] = s.now()
+	}
 	for key, v := range s.sessions {
 		if v.DeviceID == id {
 			delete(s.sessions, key)
 		}
 	}
-	v := session{DeviceID: id, Token: randomSecret(), Expires: now.Add(24 * time.Hour)}
+	v := session{DeviceID: id, Token: randomSecret(), Expires: s.now().Add(24 * time.Hour)}
+	if s.replica && v.Expires.After(s.leaseExpires) {
+		v.Expires = s.leaseExpires
+	}
 	s.sessions[runID(v.Token)] = v
 	c := s.configLocked(v)
 	c.Token = v.Token
@@ -190,7 +269,7 @@ func (s *Store) Register(r Registration) (DeviceConfig, error) {
 func (s *Store) sessionLocked(id, token string) (session, error) {
 	v, ok := s.sessions[runID(token)]
 	d := s.state.Devices[id]
-	if !ok || v.DeviceID != id || d == nil || !d.Enabled || time.Now().After(v.Expires) || subtle.ConstantTimeCompare([]byte(v.Token), []byte(token)) != 1 {
+	if !s.leaseValidLocked() || !ok || v.DeviceID != id || d == nil || !d.Enabled || !s.now().Before(v.Expires) || subtle.ConstantTimeCompare([]byte(v.Token), []byte(token)) != 1 {
 		return session{}, ErrDenied
 	}
 	return v, nil
@@ -202,12 +281,25 @@ func (s *Store) Config(id, token string) (DeviceConfig, error) {
 	if e != nil {
 		return DeviceConfig{}, e
 	}
-	s.state.Devices[id].LastSeen = time.Now().UTC()
+	s.state.Devices[id].LastSeen = s.now()
+	if s.replica {
+		s.heartbeats[id] = s.now()
+	}
 	return s.configLocked(v), nil
 }
 func (s *Store) configLocked(v session) DeviceConfig {
 	d := s.state.Devices[v.DeviceID]
-	c := DeviceConfig{ID: d.ID, Expires: v.Expires, Secret: d.Secret, Grants: []Grant{}}
+	c := DeviceConfig{ID: d.ID, Expires: v.Expires, Secret: d.Secret, Grants: []Grant{}, Nodes: append([]Node(nil), s.nodes...), PolicyRevision: s.state.Revision}
+	if s.replica {
+		c.PolicyIssued = s.leaseIssued
+		c.PolicyExpires = s.leaseExpires
+		if c.Expires.After(s.leaseExpires) {
+			c.Expires = s.leaseExpires
+		}
+	} else {
+		c.PolicyIssued = s.now()
+		c.PolicyExpires = c.PolicyIssued.Add(24 * time.Hour)
+	}
 	for _, r := range s.state.Rules {
 		t := s.state.Devices[r.Target]
 		if r.Source == d.ID && t != nil && t.Enabled {
@@ -220,7 +312,7 @@ func (s *Store) configLocked(v session) DeviceConfig {
 func (s *Store) Snapshot() ([]Device, []Rule) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := time.Now()
+	now := s.now()
 	active := make(map[string]bool, len(s.sessions))
 	for _, session := range s.sessions {
 		if now.Before(session.Expires) {
@@ -231,9 +323,29 @@ func (s *Store) Snapshot() ([]Device, []Rule) {
 	for _, p := range s.state.Devices {
 		d := *p
 		d.Secret = ""
+		if s.replica {
+			d.LastSeen = s.heartbeats[d.ID]
+		}
 		// Evaluate heartbeats with the same clock that timestamps them. Browser
 		// clocks may differ, and persisted heartbeats alone do not imply a session.
-		d.Online = d.Enabled && active[d.ID] && now.Sub(d.LastSeen) < 30*time.Second
+		d.Online = d.Enabled && s.leaseValidLocked() && active[d.ID] && now.Sub(d.LastSeen) < 30*time.Second
+		d.Tunnels = map[string]bool{}
+		if s.tunnelOnline != nil {
+			d.Tunnels[s.nodeID] = d.Enabled && s.leaseValidLocked() && s.tunnelOnline(d.ID)
+		}
+		for node, report := range s.reports {
+			if now.Sub(report.Received) < 30*time.Second {
+				d.Tunnels[node] = d.Enabled && report.Tunnels[d.ID]
+				if seen, ok := report.Seen[d.ID]; ok && now.Sub(seen) < 30*time.Second && d.Enabled {
+					d.Online = true
+					if seen.After(d.LastSeen) {
+						d.LastSeen = seen
+					}
+				}
+			} else {
+				d.Tunnels[node] = false
+			}
+		}
 		ds = append(ds, d)
 	}
 	sort.Slice(ds, func(i, j int) bool { return ds[i].Created.Before(ds[j].Created) })
@@ -241,6 +353,9 @@ func (s *Store) Snapshot() ([]Device, []Rule) {
 	return ds, rs
 }
 func (s *Store) SetEnabled(id string, enabled bool) error {
+	if s.replica {
+		return fmt.Errorf("permissions are managed by the authority")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d := s.state.Devices[id]
@@ -266,6 +381,9 @@ func (s *Store) SetEnabled(id string, enabled bool) error {
 // DeleteDevice removes the device and both directions of its permissions.
 // Sessions and active tunnels are revoked only after the database is saved.
 func (s *Store) DeleteDevice(id string) error {
+	if s.replica {
+		return fmt.Errorf("permissions are managed by the authority")
+	}
 	s.mu.Lock()
 	d := s.state.Devices[id]
 	if d == nil {
@@ -298,6 +416,9 @@ func (s *Store) DeleteDevice(id string) error {
 }
 
 func (s *Store) SetRule(source, target string, allow bool) error {
+	if s.replica {
+		return fmt.Errorf("permissions are managed by the authority")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if source == target || s.state.Devices[source] == nil || s.state.Devices[target] == nil {
@@ -341,7 +462,7 @@ func (s *Store) SetRule(source, target string, allow bool) error {
 func (s *Store) allowedLocked(source, target, rid string) bool {
 	v, ok := s.sessions[rid]
 	a, b := s.state.Devices[source], s.state.Devices[target]
-	if !ok || v.DeviceID != source || time.Now().After(v.Expires) || a == nil || b == nil || !a.Enabled || !b.Enabled {
+	if !s.leaseValidLocked() || !ok || v.DeviceID != source || !s.now().Before(v.Expires) || a == nil || b == nil || !a.Enabled || !b.Enabled {
 		return false
 	}
 	for _, r := range s.state.Rules {
@@ -383,7 +504,7 @@ func (s *Store) RevokeConnections() {
 		}
 	}
 	for k, v := range s.sessions {
-		if time.Now().After(v.Expires) {
+		if !s.now().Before(v.Expires) {
 			delete(s.sessions, k)
 		}
 	}

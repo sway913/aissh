@@ -526,10 +526,11 @@ func (svr *Service) handleConnection(ctx context.Context, conn net.Conn, interna
 	case *msg.NewVisitorConn:
 		if err = svr.RegisterVisitorConn(conn, m, acceptedConn.wireProtocol); err != nil {
 			xl.Warnf("register visitor conn error: %v", err)
-			_ = acceptedConn.conn.WriteMsg(&msg.NewVisitorConnResp{
-				ProxyName: m.ProxyName,
-				Error:     util.GenerateResponseErrorString("register visitor conn error", err, lo.FromPtr(svr.cfg.DetailedErrorsToClient)),
-			})
+			message := util.GenerateResponseErrorString("register visitor conn error", err, lo.FromPtr(svr.cfg.DetailedErrorsToClient))
+			if errors.Is(err, ErrVisitorDenied) {
+				message = ErrVisitorDenied.Error()
+			}
+			_ = acceptedConn.conn.WriteMsg(&msg.NewVisitorConnResp{ProxyName: m.ProxyName, Error: message})
 			conn.Close()
 		} else {
 			_ = acceptedConn.conn.WriteMsg(&msg.NewVisitorConnResp{

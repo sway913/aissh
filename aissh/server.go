@@ -17,13 +17,16 @@ import (
 )
 
 type ServerOptions struct {
-	DataDir, APIAddr, AdminAddr string
-	TunnelPort                  int
+	DataDir, APIAddr, AdminAddr, FederationFile string
+	TunnelPort                                  int
 }
 
 func RunServer(ctx context.Context, o ServerOptions) error {
 	s, e := OpenStore(o.DataDir)
 	if e != nil {
+		return e
+	}
+	if e = s.configureFederation(o.FederationFile); e != nil {
 		return e
 	}
 	cert, key := filepath.Join(o.DataDir, "server.crt"), filepath.Join(o.DataDir, "server.key")
@@ -56,9 +59,14 @@ func RunServer(ctx context.Context, o ServerOptions) error {
 	defer svr.Close()
 	svr.RegisterPlugin(&devicePolicy{store: s})
 	svr.SetVisitorConnHook(func(c net.Conn, user, rid, proxy string) (net.Conn, error) {
-		return s.Track(c, user, targetFromProxy(proxy), rid)
+		conn, err := s.Track(c, user, targetFromProxy(proxy), rid)
+		if err != nil {
+			return nil, server.ErrVisitorDenied
+		}
+		return conn, nil
 	})
-	api := &http.Server{Addr: o.APIAddr, Handler: DeviceHandler(s), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+	s.tunnelOnline = func(id string) bool { return svr.HasProxy(id + ".ssh") }
+	api := &http.Server{Addr: o.APIAddr, Handler: s.federationHandler(DeviceHandler(s)), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	admin := &http.Server{Addr: o.AdminAddr, Handler: AdminHandler(s, strings.TrimSpace(string(password))), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	apiLn, e := net.Listen("tcp", o.APIAddr)
 	if e != nil {
@@ -72,6 +80,9 @@ func RunServer(ctx context.Context, o ServerOptions) error {
 	defer adminLn.Close()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if s.replica {
+		go s.runReplica(ctx)
+	}
 	errs := make(chan error, 3)
 	go func() { errs <- api.ServeTLS(apiLn, cert, key) }()
 	go func() { errs <- admin.Serve(adminLn) }()

@@ -55,7 +55,7 @@ func callAPI(ctx context.Context, h *http.Client, method, url, id, token string,
 	if res.StatusCode != 200 {
 		return apiError{res.StatusCode}
 	}
-	return json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(out)
+	return json.NewDecoder(io.LimitReader(res.Body, 32<<20)).Decode(out)
 }
 func configs(c DeviceConfig, sshPort int) ([]v1.ProxyConfigurer, []v1.VisitorConfigurer) {
 	p := &v1.STCPProxyConfig{ProxyBaseConfig: v1.ProxyBaseConfig{Name: "ssh", Type: "stcp", ProxyBackend: v1.ProxyBackend{LocalIP: "127.0.0.1", LocalPort: sshPort}}, Secretkey: c.Secret, AllowUsers: []string{"*"}}
@@ -143,86 +143,8 @@ func RunAgent(ctx context.Context, o AgentOptions) error {
 	if e = os.WriteFile(caPath, ca, 0600); e != nil {
 		return e
 	}
-	h := registrationClient()
-	defer h.CloseIdleConnections()
 	log.Printf("device %s (%s); registering with %s", id, name, base)
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-	var svc *client.Service
-	var svcCancel context.CancelFunc
-	var svcDone chan struct{}
-	var token string
-	var lastConfig string
-	stopService := func() {
-		if svcCancel != nil {
-			svcCancel()
-		}
-		if svcDone != nil {
-			<-svcDone
-			svcDone = nil
-		}
-		svc = nil
-	}
-	defer stopService()
-	for {
-		var c DeviceConfig
-		register := token == ""
-		if register {
-			e = callAPI(ctx, h, "POST", base+"/v1/register", "", "", Registration{Fingerprint: fp, Name: name, OS: runtime.GOOS, Username: username, Account: account}, &c)
-		} else {
-			e = callAPI(ctx, h, "GET", base+"/v1/config", id, token, nil, &c)
-		}
-		if e != nil {
-			if ae, ok := e.(apiError); ok && (ae.Status == 401 || ae.Status == 403) {
-				token = ""
-				if svc != nil {
-					stopService()
-				}
-				log.Printf("device registration required or disabled; waiting for administrator")
-			} else if ctx.Err() == nil {
-				log.Printf("control server unavailable: %v", e)
-			}
-		} else {
-			if c.ID != id {
-				return fmt.Errorf("server returned an unexpected device ID")
-			}
-			if register {
-				token = c.Token
-				if token == "" {
-					return fmt.Errorf("registration returned no session")
-				}
-				if svc != nil {
-					stopService()
-				}
-				svc, e = newAgentService(o, c, token, caPath)
-				if e != nil {
-					return e
-				}
-				svcCancel, svcDone = launchAgentService(ctx, svc)
-				log.Printf("registered %s; waiting for access permissions", id)
-			}
-			p, v := configs(c, o.SSHPort)
-			signature, _ := json.Marshal(c.Grants)
-			if string(signature) != lastConfig || register {
-				if e = svc.UpdateAllConfigurer(p, v); e != nil {
-					log.Printf("apply permissions: %v", e)
-				} else {
-					lastConfig = string(signature)
-					for _, g := range c.Grants {
-						log.Printf("%s (%s): ssh -p %d USER@127.0.0.1", g.Name, g.Target, g.Port)
-					}
-				}
-			}
-			if time.Until(c.Expires) < time.Minute {
-				token = ""
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-		}
-	}
+	return runMultiNodeAgent(ctx, o, Registration{Fingerprint: fp, Name: name, OS: runtime.GOOS, Username: username, Account: account}, id, ca)
 }
 
 func launchAgentService(ctx context.Context, svc *client.Service) (context.CancelFunc, chan struct{}) {

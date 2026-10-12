@@ -70,6 +70,26 @@ jobs:
           ./bin/aisshs --version
           ./bin/aisshc --version
 
+  container:
+    name: ARM64 container and Compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - name: Validate Compose configuration
+        run: docker compose -f deploy/lan/compose.yaml config --quiet
+      - name: Build Linux ARM64 image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/lan/Dockerfile
+          platforms: linux/arm64
+          push: false
+          tags: aissh-server:lan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   startup:
     name: Startup lifecycle ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -144,7 +164,7 @@ jobs:
 
   package:
     name: Package ${{ matrix.os }}-${{ matrix.arch }}
-    needs: [test, startup]
+    needs: [test, startup, container]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:

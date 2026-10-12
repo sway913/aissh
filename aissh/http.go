@@ -1,6 +1,7 @@
 package aissh
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	_ "embed"
@@ -89,6 +90,14 @@ func DeviceHandler(s *Store) http.Handler {
 			return
 		}
 		c, e := s.Register(body)
+		if e == ErrUnknownDevice && s.forwardRegistration != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			e = s.forwardRegistration(ctx, body)
+			cancel()
+			if e == nil {
+				c, e = s.Register(body)
+			}
+		}
 		if e != nil {
 			if e == ErrDenied {
 				fail(w, 403, "device disabled")
@@ -123,7 +132,7 @@ func AdminHandler(s *Store, password string) http.Handler {
 	})
 	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
 		ds, rs := s.Snapshot()
-		respond(w, 200, map[string]any{"devices": ds, "rules": rs})
+		respond(w, 200, map[string]any{"devices": ds, "rules": rs, "nodes": s.nodeStatuses()})
 	})
 	mux.HandleFunc("POST /api/devices", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {

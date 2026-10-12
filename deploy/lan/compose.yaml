@@ -1,0 +1,32 @@
+name: aissh-lan
+services:
+  server:
+    image: aissh-server:lan
+    platform: linux/arm64
+    build:
+      context: ../..
+      dockerfile: deploy/lan/Dockerfile
+    user: "${AISSH_UID:-502}:${AISSH_GID:-20}"
+    restart: unless-stopped
+    ports:
+      - "443:17443"
+      - "17000:17000"
+    volumes:
+      - ${AISSH_DATA_DIR:-/Users/qihoo/aissh-server/data}:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: [CMD, /usr/local/bin/aisshs, --healthcheck, --data-dir, /data, --api-addr, 127.0.0.1:17443]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

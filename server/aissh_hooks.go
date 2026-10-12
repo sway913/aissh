@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	plugin "github.com/fatedier/frp/pkg/plugin/server"
 	"net"
 )
@@ -14,3 +15,9 @@ func (svr *Service) RegisterPlugin(p plugin.Plugin) { svr.pluginManager.Register
 func (svr *Service) SetVisitorConnHook(hook func(conn net.Conn, user, runID, proxyName string) (net.Conn, error)) {
 	svr.visitorConnHook = hook
 }
+
+// ErrVisitorDenied distinguishes ACL rejection from an unavailable target.
+var ErrVisitorDenied = errors.New("aissh authorization denied")
+
+// HasProxy reports an actually registered proxy rather than an API heartbeat.
+func (svr *Service) HasProxy(name string) bool { _, ok := svr.pxyManager.GetByName(name); return ok }
