@@ -41,3 +41,20 @@ DNS：`lan-connect.builderopc.com A 10.19.181.6`，仅 DNS。公司 ACL：客户
 回滚时香港停止下发内网节点（保留香港节点），客户端下次获取配置后停止内网连接；回退香港旧二进制和客户端旧二进制可恢复单节点模式。不要回退正在使用的设备数据库，以免意外恢复已撤销权限；数据库备份用于灾难恢复。
 
 验收：race 测试包含真实 TLS/STCP/SSH 内网优先、目标仅公网时备用路径、权限拒绝不跨节点重试，以及签名、快照回退、撤销与重启到期测试。公司跨网访问及 Docker Desktop 登录后恢复需在真实环境验收。
+
+## 当前试点部署（2026-10-12）
+
+香港已启用 authority；Mac mini 已启用 replica，签名权限同步和健康检查通过。个人 Mac 与 Mac mini 的启动服务已更新，Mac mini 同时建立两个节点的 SSH 隧道。个人 Mac 保留 `127.0.0.1:22000` 访问 Mac mini，当前内网访问超时后走香港。公司 ACL 尚未放通，因此尚未完成个人 Mac 直达内网的数据路径验收。
+
+当前 Mac mini 无法直接下载 GitHub 发布包，因此试点镜像使用经过 SHA256 校验的本地交叉编译 Linux ARM64 静态程序和系统 CA 构建。构建上下文保存在 `/Users/qihoo/aissh-server/build`，部署 Compose 的 build 指向该目录；仓库多阶段 Dockerfile 仍由 CI 验证。私钥和节点凭证位于 data 目录，不在镜像中。
+
+日常检查（Mac mini）：
+
+```sh
+cd /Users/qihoo/aissh-server
+docker compose ps
+docker compose logs --tail 100
+docker compose exec server /usr/local/bin/aisshs --healthcheck --data-dir /data --api-addr 127.0.0.1:17443
+```
+
+Mac mini 升级前客户端及配置位于 `/Users/qihoo/aissh-server/backup-before-dual-node/`；香港升级前备份位于 `/root/aissh-before-dual-node-20261012T125412Z/`。恢复客户端需管理员权限，使用备份程序的 `--service update`；随后在香港停用内网发现。保留现行设备数据库和最新授权。

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -85,5 +86,47 @@ func TestSignedPolicyOfflineRestartExpiryAndRevocation(t *testing.T) {
 	}
 	if restarted.applyPolicy(envelope, false) == nil {
 		t.Fatal("expired snapshot accepted live")
+	}
+}
+
+func TestOfflineLeaseClosesActiveAndRejectsUnknownDevices(t *testing.T) {
+	now := time.Now().UTC()
+	authority, _ := OpenStore(t.TempDir())
+	authority.clock = func() time.Time { return now }
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	authority.signingKey = priv
+	a := mustRegister(t, authority, "00:11:22:33:44:55", "A")
+	b := mustRegister(t, authority, "00:11:22:33:44:56", "B")
+	authority.SetRule(a.ID, b.ID, true)
+	replica, _ := OpenStore(t.TempDir())
+	replica.replica = true
+	replica.clock = func() time.Time { return now }
+	replica.federation = &FederationConfig{PublicKey: base64.StdEncoding.EncodeToString(pub)}
+	snapshot, _ := authority.signedSnapshot()
+	if err := replica.applyPolicy(snapshot, false); err != nil {
+		t.Fatal(err)
+	}
+	c, err := replica.Register(registration("00:11:22:33:44:55", "A"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replica.Register(registration("00:11:22:33:44:57", "unknown")); err != ErrUnknownDevice {
+		t.Fatalf("offline unknown device: %v", err)
+	}
+	local, peer := net.Pipe()
+	defer peer.Close()
+	tracked, err := replica.Track(local, a.ID, b.ID, runID(c.Token))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracked.Close()
+	now = now.Add(24 * time.Hour)
+	replica.RevokeConnections()
+	peer.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := peer.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("expired stream was not closed: %v", err)
+	}
+	if _, err := replica.Config(a.ID, c.Token); err != ErrDenied {
+		t.Fatalf("expired session accepted: %v", err)
 	}
 }
