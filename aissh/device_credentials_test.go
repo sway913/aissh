@@ -142,6 +142,55 @@ func TestDeviceCredentialMigrationPreservesIDRoleRulesAndPort(t *testing.T) {
 		t.Fatalf("lost key bypass via hardware: %v", err)
 	}
 }
+func TestClonedHardwarePreservesDistinctLegacyDevices(t *testing.T) {
+	s, _ := OpenStore(t.TempDir())
+	a := registration("00:11:22:33:44:55", "clone")
+	b := registration("00:11:22:33:44:66", "clone")
+	ar, err := s.Register(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	br, err := s.Register(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRule(ar.ID, br.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	rules := append([]Rule(nil), s.state.Rules...)
+	ai := credentialIdentity(t, a.Fingerprint)
+	if id := migrateIdentity(t, s, ai, a); id != ar.ID {
+		t.Fatal("first clone changed ID")
+	}
+	if _, err := s.Register(b); err != nil {
+		t.Fatalf("unbound legacy clone stopped working: %v", err)
+	}
+	bi := credentialIdentity(t, b.Fingerprint)
+	if id := migrateIdentity(t, s, bi, b); id != br.ID {
+		t.Fatal("second clone changed ID")
+	}
+	for _, item := range []struct {
+		identity     *DeviceIdentity
+		registration Registration
+	}{{ai, a}, {bi, b}} {
+		if _, err := s.Register(proofFor(t, s, item.identity, item.registration)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Register(item.registration); err != ErrDenied {
+			t.Fatal("bound clone accepted legacy authentication")
+		}
+	}
+	if len(s.state.Devices) != 2 || !reflect.DeepEqual(rules, s.state.Rules) {
+		t.Fatal("clone migration changed devices or ports")
+	}
+	attacker := credentialIdentity(t, a.Fingerprint)
+	bad := a
+	bad.Legacy = attacker.Legacy
+	if _, err := s.enroll(proofFor(t, s, attacker, bad)); err != ErrDenied {
+		t.Fatal("clone handling bypassed bound credential")
+	}
+}
+
 func TestDeviceProofTamperingExpiryAndServerRestart(t *testing.T) {
 	s, _ := OpenStore(t.TempDir())
 	now := time.Now().UTC()

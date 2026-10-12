@@ -204,7 +204,7 @@ func (s *Store) checkCredentialLocked(r Registration, id string, consume bool) e
 		if d != nil && d.PublicKey != "" {
 			return ErrDenied
 		}
-		if len(r.Fingerprint.Hardware) > 0 {
+		if d == nil && len(r.Fingerprint.Hardware) > 0 {
 			for _, bound := range s.state.Devices {
 				if bound.PublicKey != "" && sameStrings(bound.Hardware, r.Fingerprint.Hardware) {
 					return ErrDenied
@@ -271,13 +271,16 @@ func (s *Store) enroll(r Registration) (string, error) {
 	// An old adapter may already have disappeared. Stored legacy MAC + the
 	// observed hardware hashes can still reproduce its exact old ID. Never
 	// merge by hostname, username, or MAC alone.
-	for _, d := range s.state.Devices {
-		if d.PublicKey != "" && len(d.Hardware) > 0 && sameStrings(d.Hardware, r.Fingerprint.Hardware) {
-			candidates[d.ID] = true
-		}
-	}
 	fallback := len(candidatesWithRecords(candidates, s.state.Devices)) == 0
 	if len(r.Fingerprint.Hardware) > 0 && fallback {
+		// Cloned VMs can share every platform hardware hash while retaining
+		// distinct legacy MAC identities. Only use hardware recovery when no
+		// existing legacy identity matches; never override a direct match.
+		for _, d := range s.state.Devices {
+			if d.PublicKey != "" && len(d.Hardware) > 0 && sameStrings(d.Hardware, r.Fingerprint.Hardware) {
+				candidates[d.ID] = true
+			}
+		}
 		for _, d := range s.state.Devices {
 			if d.OS != r.OS {
 				continue
