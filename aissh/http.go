@@ -164,6 +164,21 @@ func AdminHandler(s *Store, password string) http.Handler {
 		}
 		respond(w, 200, map[string]bool{"ok": true})
 	})
+	mux.HandleFunc("POST /api/devices/admin", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			ID    string `json:"id"`
+			Admin bool   `json:"admin"`
+		}
+		if e := decode(w, r, &body); e != nil {
+			fail(w, 400, "invalid request")
+			return
+		}
+		if e := s.SetAdmin(body.ID, body.Admin); e != nil {
+			fail(w, 400, e.Error())
+			return
+		}
+		respond(w, 200, map[string]bool{"ok": true})
+	})
 	mux.HandleFunc("POST /api/rules", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Source string `json:"source"`

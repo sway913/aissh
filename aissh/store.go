@@ -33,6 +33,7 @@ type Device struct {
 	OS       string          `json:"os"`
 	MACs     []string        `json:"macs"`
 	Enabled  bool            `json:"enabled"`
+	Admin    bool            `json:"admin"`
 	Online   bool            `json:"online"`
 	Created  time.Time       `json:"created"`
 	LastSeen time.Time       `json:"lastSeen"`
@@ -40,9 +41,10 @@ type Device struct {
 	Tunnels  map[string]bool `json:"tunnels,omitempty"`
 }
 type Rule struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
-	Port   int    `json:"port"`
+	Source    string `json:"source"`
+	Target    string `json:"target"`
+	Port      int    `json:"port"`
+	Automatic bool   `json:"automatic,omitempty"`
 }
 type state struct {
 	Revision uint64             `json:"revision,omitempty"`
@@ -198,8 +200,16 @@ func (s *Store) upsertLocked(r Registration, id string) (*Device, error) {
 			return nil, fmt.Errorf("device limit reached")
 		}
 		d = &Device{ID: id, Name: r.Name, Username: r.Username, Account: r.Account, OS: r.OS, MACs: append([]string(nil), r.Fingerprint.MACs...), Enabled: true, Created: now, LastSeen: now, Secret: randomSecret()}
+		oldRules := s.state.Rules
+		s.state.Rules = append([]Rule{}, oldRules...)
 		s.state.Devices[id] = d
+		if e := s.syncAdminRulesLocked(); e != nil {
+			delete(s.state.Devices, id)
+			s.state.Rules = oldRules
+			return nil, e
+		}
 		if e := s.saveLocked(); e != nil {
+			s.state.Rules = oldRules
 			delete(s.state.Devices, id)
 			return nil, e
 		}
@@ -415,6 +425,75 @@ func (s *Store) DeleteDevice(id string) error {
 	return nil
 }
 
+// Materialize automatic grants at the authority so every node and older client
+// receives the same stable local port assignments through the existing protocol.
+func (s *Store) syncAdminRulesLocked() error {
+	ids := make([]string, 0, len(s.state.Devices))
+	for id := range s.state.Devices {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, source := range ids {
+		if !s.state.Devices[source].Admin {
+			continue
+		}
+		used, targets := map[int]bool{}, map[string]bool{}
+		for _, r := range s.state.Rules {
+			if r.Source == source {
+				used[r.Port], targets[r.Target] = true, true
+			}
+		}
+		for _, target := range ids {
+			if target == source || targets[target] {
+				continue
+			}
+			port := 22000
+			for used[port] && port < 23000 {
+				port++
+			}
+			if port == 23000 {
+				return fmt.Errorf("too many permissions")
+			}
+			s.state.Rules = append(s.state.Rules, Rule{Source: source, Target: target, Port: port, Automatic: true})
+			used[port] = true
+		}
+	}
+	return nil
+}
+
+func (s *Store) SetAdmin(id string, admin bool) error {
+	if s.replica {
+		return fmt.Errorf("permissions are managed by the authority")
+	}
+	s.mu.Lock()
+	d := s.state.Devices[id]
+	if d == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("unknown device")
+	}
+	oldAdmin, oldRules := d.Admin, s.state.Rules
+	d.Admin = admin
+	s.state.Rules = make([]Rule, 0, len(oldRules))
+	for _, r := range oldRules {
+		if !admin && r.Source == id && r.Automatic {
+			continue
+		}
+		s.state.Rules = append(s.state.Rules, r)
+	}
+	err := s.syncAdminRulesLocked()
+	if err == nil {
+		err = s.saveLocked()
+	}
+	if err != nil {
+		d.Admin, s.state.Rules = oldAdmin, oldRules
+	}
+	s.mu.Unlock()
+	if err == nil {
+		s.RevokeConnections()
+	}
+	return err
+}
+
 func (s *Store) SetRule(source, target string, allow bool) error {
 	if s.replica {
 		return fmt.Errorf("permissions are managed by the authority")
@@ -423,6 +502,9 @@ func (s *Store) SetRule(source, target string, allow bool) error {
 	defer s.mu.Unlock()
 	if source == target || s.state.Devices[source] == nil || s.state.Devices[target] == nil {
 		return fmt.Errorf("invalid device pair")
+	}
+	if s.state.Devices[source].Admin {
+		return fmt.Errorf("administrator devices already have automatic access; change their role first")
 	}
 	old := append([]Rule{}, s.state.Rules...)
 	idx := -1
@@ -466,7 +548,7 @@ func (s *Store) allowedLocked(source, target, rid string) bool {
 		return false
 	}
 	for _, r := range s.state.Rules {
-		if r.Source == source && r.Target == target {
+		if r.Source == source && r.Target == target && (!r.Automatic || a.Admin) {
 			return true
 		}
 	}
