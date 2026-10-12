@@ -16,13 +16,14 @@ import (
 
 // StartupConfig contains public device metadata and options, never session tokens.
 type StartupConfig struct {
-	Options  AgentOptions
-	User     string
-	UID      int
-	GID      int
-	Username string
-	Account  string
-	Hardware []string
+	Options           AgentOptions
+	User              string
+	UID               int
+	GID               int
+	Username          string
+	Account           string
+	Hardware          []string
+	IdentitySourceDir string `json:"-"`
 }
 
 type startupStatus struct{ Installed, Running, Enabled bool }
@@ -102,10 +103,11 @@ func NewStartupConfig(o AgentOptions) (StartupConfig, error) {
 			return c, err
 		}
 		// SYSTEM must use the same hardware fields available to the installing user.
-		// MAC addresses are still detected afresh every time the task starts.
+		// This legacy observation is used only when migrating the old device ID.
 		c.Hardware = fp.Hardware
 		dir, _, _ := startupPaths(runtime.GOOS)
 		c.Options.StateDir = filepath.Join(dir, "state")
+		c.IdentitySourceDir = o.StateDir
 	} else if os.Getenv("SUDO_USER") != "" {
 		defaultHome, err := os.UserConfigDir()
 		if err == nil && o.StateDir == filepath.Join(defaultHome, "aissh") {
@@ -196,6 +198,9 @@ func saveStartupFiles(c StartupConfig) error {
 			return err
 		}
 	}
+	if err = copyStartupIdentity(c.IdentitySourceDir, c.Options.StateDir, c.Options.APIURL); err != nil {
+		return err
+	}
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
@@ -255,6 +260,7 @@ func ensureStartup(b startupBackend, o AgentOptions, action string, admin func()
 			c.User, c.UID, c.GID = old.User, old.UID, old.GID
 			c.Username, c.Account, c.Hardware = old.Username, old.Account, old.Hardware
 			c.Options.StateDir = old.Options.StateDir
+			c.IdentitySourceDir = ""
 			if err = b.stop(); err != nil {
 				return "", err
 			}
@@ -293,4 +299,69 @@ func LoadStartupConfig() (StartupConfig, error) {
 	}
 	err = json.Unmarshal(b, &c)
 	return c, err
+}
+
+// Foreground execution and the installed service resolve the same identity.
+// An explicit state-dir is an intentional separate installation.
+func ResolveAgentIdentityOptions(o AgentOptions) (AgentOptions, error) {
+	return resolveAgentIdentityOptions(o, LoadStartupConfig)
+}
+func resolveAgentIdentityOptions(o AgentOptions, load func() (StartupConfig, error)) (AgentOptions, error) {
+	if o.StateDirExplicit {
+		return o, nil
+	}
+	c, err := load()
+	if err == nil && !o.StateDirExplicit {
+		o.StateDir = c.Options.StateDir
+		o.ManagedIdentity = &c
+		return o, nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return o, fmt.Errorf("read installed identity configuration: %w", err)
+	}
+	if runtime.GOOS != "windows" && os.Geteuid() == 0 && os.Getenv("SUDO_USER") != "" && !o.StateDirExplicit {
+		c, err = NewStartupConfig(o)
+		if err != nil {
+			return o, err
+		}
+		o.StateDir = c.Options.StateDir
+		o.ManagedIdentity = &c
+	}
+	return o, nil
+}
+
+func copyStartupIdentity(source, dest, authority string) error {
+	if source == "" || source == dest {
+		return nil
+	}
+	if _, err := os.Stat(identityPath(dest)); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	raw, err := os.ReadFile(identityPath(source))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	unlock, err := lockAgentIdentity(source)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	var identity DeviceIdentity
+	if json.Unmarshal(raw, &identity) != nil || identity.Authority != authority || !validDeviceID(identity.ID) {
+		return fmt.Errorf("invalid foreground identity; refusing to replace it during startup installation")
+	}
+	if _, err = identity.key(); err != nil {
+		return err
+	}
+	if err = atomicPrivate(identityPath(dest), raw); err != nil {
+		return err
+	}
+	// Remove the old secret only after the shared copy has been saved. Once a
+	// service is installed, normal foreground execution resolves its state-dir.
+	return os.Remove(identityPath(source))
 }

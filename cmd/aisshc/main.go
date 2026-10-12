@@ -26,6 +26,11 @@ func main() {
 	serviceAction := flag.String("service", "", "startup management: status, update, uninstall")
 	showVersion := flag.Bool("version", false, "print aissh version and commit")
 	flag.Parse()
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "state-dir" {
+			o.StateDirExplicit = true
+		}
+	})
 	if *showVersion {
 		fmt.Println(aissh.VersionString())
 		return

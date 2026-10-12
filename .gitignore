@@ -39,3 +39,7 @@ node_modules/
 # Local aissh credentials and runtime data
 .aissh-server/
 .aissh/
+
+# Private device identity (never ship or commit client runtime state)
+identity.json
+identity.lock

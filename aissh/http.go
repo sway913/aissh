@@ -20,7 +20,7 @@ import (
 var adminHTML []byte
 
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 16384)
+	r.Body = http.MaxBytesReader(w, r.Body, 65536)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if e := d.Decode(v); e != nil {
@@ -61,29 +61,33 @@ func DeviceHandler(s *Store) http.Handler {
 	mux := http.NewServeMux()
 	var mu sync.Mutex
 	limits := map[string]rateEntry{}
-	mux.HandleFunc("POST /v1/register", func(w http.ResponseWriter, r *http.Request) {
-		ip := registrationIP(r)
-		minute := time.Now().Unix() / 60
-		mu.Lock()
-		entry := limits[ip]
-		if entry.minute != minute {
-			entry = rateEntry{minute: minute}
-		}
-		entry.count++
-		if len(limits) > 4096 {
-			for k, v := range limits {
-				if v.minute != minute {
-					delete(limits, k)
-				}
-			}
-		}
-		blocked := entry.count > 10 || len(limits) > 8192
-		limits[ip] = entry
-		mu.Unlock()
-		if blocked {
-			fail(w, 429, "registration rate limit; retry later")
+	mux.HandleFunc("POST /v1/identity/challenge", func(w http.ResponseWriter, r *http.Request) {
+		nonce, err := s.challenge()
+		if err != nil {
+			fail(w, 503, "authentication temporarily unavailable")
 			return
 		}
+		respond(w, 200, map[string]string{"challenge": nonce})
+	})
+	mux.HandleFunc("POST /v1/identity/enroll", func(w http.ResponseWriter, r *http.Request) {
+		var body Registration
+		if decode(w, r, &body) != nil {
+			fail(w, 400, "invalid enrollment")
+			return
+		}
+		id, err := s.enroll(body)
+		if err != nil {
+			if err == ErrDenied {
+				fail(w, 403, "identity enrollment denied")
+			} else {
+				fail(w, 400, "identity enrollment failed")
+			}
+			return
+		}
+		respond(w, 200, map[string]string{"id": id})
+	})
+	mux.HandleFunc("POST /v1/register", func(w http.ResponseWriter, r *http.Request) {
+
 		var body Registration
 		if e := decode(w, r, &body); e != nil {
 			fail(w, 400, "invalid registration")
@@ -117,7 +121,33 @@ func DeviceHandler(s *Store) http.Handler {
 		}
 		respond(w, 200, c)
 	})
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			ip := registrationIP(r)
+			minute := time.Now().Unix() / 60
+			mu.Lock()
+			entry := limits[ip]
+			if entry.minute != minute {
+				entry = rateEntry{minute: minute}
+			}
+			entry.count++
+			if len(limits) > 4096 {
+				for k, v := range limits {
+					if v.minute != minute {
+						delete(limits, k)
+					}
+				}
+			}
+			blocked := entry.count > 60 || len(limits) > 8192
+			limits[ip] = entry
+			mu.Unlock()
+			if blocked {
+				fail(w, 429, "registration rate limit; retry later")
+				return
+			}
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 func AdminHandler(s *Store, password string) http.Handler {

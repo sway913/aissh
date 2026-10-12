@@ -37,6 +37,7 @@ type agentRouter struct {
 	mu              sync.Mutex
 	ctx             context.Context
 	options         AgentOptions
+	identity        *DeviceIdentity
 	registration    Registration
 	id              string
 	ca              []byte
@@ -56,7 +57,11 @@ type nodeCache struct {
 }
 
 func runMultiNodeAgent(ctx context.Context, o AgentOptions, registration Registration, id string, ca []byte) error {
-	r := &agentRouter{ctx: ctx, options: o, registration: registration, id: id, ca: ca, workers: map[string]*nodeWorker{}, listeners: map[int]routeListener{}, active: map[net.Conn]string{}, grants: map[string]Grant{}}
+	return runMultiNodeAgentWithIdentity(ctx, o, registration, &DeviceIdentity{ID: id}, ca)
+}
+func runMultiNodeAgentWithIdentity(ctx context.Context, o AgentOptions, registration Registration, identity *DeviceIdentity, ca []byte) error {
+	id := identity.ID
+	r := &agentRouter{identity: identity, ctx: ctx, options: o, registration: registration, id: id, ca: ca, workers: map[string]*nodeWorker{}, listeners: map[int]routeListener{}, active: map[net.Conn]string{}, grants: map[string]Grant{}}
 	nodes := []Node{{ID: "hongkong", Label: "香港", Kind: "public", APIURL: o.APIURL, Host: o.Host, TunnelPort: o.TunnelPort, Priority: 100, CAPEM: string(ca)}}
 	if b, err := os.ReadFile(filepath.Join(o.StateDir, "nodes.json")); err == nil {
 		var cache nodeCache
@@ -213,9 +218,16 @@ func (r *agentRouter) runNode(ctx context.Context, w *nodeWorker) {
 	defer ticker.Stop()
 	for {
 		var c DeviceConfig
+		err = nil
 		registering := token == ""
 		if registering {
-			err = callAPI(ctx, h, "POST", n.APIURL+"/v1/register", "", "", r.registration, &c)
+			reg := r.registration
+			if r.identity != nil && r.identity.Enrolled {
+				reg, err = signedRegistration(ctx, h, n.APIURL, r.identity, reg)
+			}
+			if err == nil {
+				err = callAPI(ctx, h, "POST", n.APIURL+"/v1/register", "", "", reg, &c)
+			}
 		} else {
 			err = callAPI(ctx, h, "GET", n.APIURL+"/v1/config", r.id, token, nil, &c)
 		}

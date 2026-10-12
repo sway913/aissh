@@ -22,7 +22,7 @@ sudo ./aisshc
 | Linux | systemd `aisshc.service`，开机启动，退出后自动重启 | `/usr/local/lib/aissh` | `journalctl -u aisshc -f` |
 | macOS | LaunchDaemon `com.builderopc.aisshc`，开机启动，退出后自动重启 | `/Library/Application Support/aissh` | 安装目录的 `client.log` |
 
-Linux/macOS 以安装者的原始用户运行，`sudo` 的原用户由 `SUDO_USER` 识别；直接以 root 安装则使用 root。Windows SYSTEM 任务使用安装时保存的 SSH 账户名及硬件辅助哈希，避免账户切换导致设备身份变化；MAC 每次启动重新读取，MAC 改变仍会产生新设备。配置不保存系统密码、PIN、SSH 私钥或临时会话。Windows 安装目录仅允许 SYSTEM 和管理员写入。
+Linux/macOS 以安装者的原始用户运行，`sudo` 的原用户由 `SUDO_USER` 识别；直接以 root 安装则使用 root。Windows SYSTEM 任务使用安装时保存的 SSH 账户名。所有系统使用状态目录里的 `identity.json` 保存固定 ID 和自动生成的设备凭证；网卡变化不改变身份。手动前台运行默认读取已安装服务的同一状态目录，并使用文件锁防止与后台服务同时持有身份。配置不保存系统密码、PIN、SSH 私钥或临时会话。Windows 安装目录仅允许 SYSTEM 和管理员写入。
 
 程序复制到固定位置，删除下载目录或关闭终端不会影响运行。安装时的 `--server`、`--api-url`、`--ssh-port`、`--ca` 等参数会保存；自定义 CA 也会复制到安装目录。普通重复执行保留已安装配置，不覆盖参数。
 
@@ -60,4 +60,12 @@ Get-NetAdapter -IncludeHidden | Select-Object Name,Status,MacAddress
 Get-CimInstance Win32_NetworkAdapter | Select-Object Name,MACAddress
 ```
 
-客户端不会用随机数或计算机名替代 MAC 注册。安装自启失败的机器下载新版后，以管理员身份重新执行 `.\aisshc.exe`；已经安装的使用 `.\aisshc.exe --service update`。
+新版不再用每次读取的 MAC 决定身份：已有 `identity.json` 时，网卡读取失败不会改变 ID；首次登记至少需要 MAC 或硬件信息可用。安装自启失败的机器下载新版后，以管理员身份重新执行 `.\aisshc.exe`；已经安装的使用 `.\aisshc.exe --service update`。
+
+## 固定身份文件
+
+身份文件位于已安装 `client.json` 中的 `Options.StateDir/identity.json`。Windows 默认为 `%ProgramData%\aissh\state\identity.json`；macOS 和 Linux 沿用安装者的用户状态目录，升级不会改变目录。用户无需填写或管理密钥，但请将该文件作为私密数据备份，不要随二进制复制到另一台电脑。
+
+Windows 首次从前台运行转为计划任务时，若用户状态目录已有身份，安装流程会将同一身份移到共享的服务状态目录。Linux/macOS 的 sudo 前台运行会采用已安装服务用户，避免生成 root 拥有、服务用户读不到的身份文件。没有安装服务时使用 `SUDO_USER` 对应的用户目录。
+
+默认手动执行仍只检查并恢复服务。使用 `--foreground` 调试前先停止已安装服务；若正在运行，会明确提示身份已被占用。显式指定 `--state-dir` 表示独立安装，不能用它绕过已登记设备的凭证认证。

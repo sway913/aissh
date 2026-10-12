@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -113,14 +115,45 @@ func waitSSH(t *testing.T, port int) *ssh.Client {
 	return nil
 }
 func TestSSHAuthorizationAndCachedCredentialRevocation(t *testing.T) {
+	for _, signed := range []bool{false, true} {
+		name := "legacy"
+		if signed {
+			name = "device-credentials"
+		}
+		t.Run(name, func(t *testing.T) { testSSHAuthorization(t, signed) })
+	}
+}
+func testSSHAuthorization(t *testing.T, signed bool) {
 	dir := t.TempDir()
 	if e := InitTLS(dir, "127.0.0.1"); e != nil {
 		t.Fatal(e)
 	}
 	store, _ := OpenStore(dir)
-	a := mustRegister(t, store, "00:11:22:33:44:55", "A")
-	b := mustRegister(t, store, "00:11:22:33:44:56", "B")
-	c := mustRegister(t, store, "00:11:22:33:44:57", "C")
+	register := func(mac, name string) DeviceConfig {
+		t.Helper()
+		if !signed {
+			return mustRegister(t, store, mac, name)
+		}
+		r := registration(mac, name)
+		hardware := sha256.Sum256([]byte("hardware-" + name))
+		r.Fingerprint.Hardware = []string{hex.EncodeToString(hardware[:])}
+		legacy, err := store.Register(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		identity := credentialIdentity(t, r.Fingerprint)
+		if id := migrateIdentity(t, store, identity, r); id != legacy.ID {
+			t.Fatal("changed ID during tunnel migration")
+		}
+		config, err := store.Register(proofFor(t, store, identity, r))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return config
+	}
+	a := register("00:11:22:33:44:55", "A")
+	b := register("00:11:22:33:44:56", "B")
+	c := register("00:11:22:33:44:57", "C")
 	if e := store.SetRule(a.ID, b.ID, true); e != nil {
 		t.Fatal(e)
 	}

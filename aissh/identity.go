@@ -133,9 +133,6 @@ func DetectFingerprint() (Fingerprint, error) {
 	interfaces, enumErr := net.Interfaces()
 	var err error
 	f.MACs, err = detectFingerprintMACs(runtime.GOOS, interfaces, enumErr, windowsFingerprintMACs)
-	if err != nil {
-		return f, err
-	}
 	add := func(label, value string) {
 		value = strings.TrimSpace(value)
 		if value != "" {
@@ -165,6 +162,9 @@ func DetectFingerprint() (Fingerprint, error) {
 		if b, e := exec.Command(filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance Win32_ComputerSystemProduct).UUID").Output(); e == nil {
 			add("platform-uuid", string(b))
 		}
+	}
+	if len(f.MACs) == 0 {
+		return f, err
 	}
 	_, err = f.ID()
 	return f, err

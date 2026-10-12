@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -247,6 +248,15 @@ func (s *Store) applyPolicy(signed signedPolicy, loading bool) error {
 		s.mu.Unlock()
 		return err
 	}
+	var revoked []net.Conn
+	for c, t := range s.connections {
+		sourceOld, sourceNew := s.state.Devices[t.Source], policy.State.Devices[t.Source]
+		targetOld, targetNew := s.state.Devices[t.Target], policy.State.Devices[t.Target]
+		if (sourceOld != nil && sourceNew != nil && sourceOld.PublicKey != sourceNew.PublicKey) || (targetOld != nil && targetNew != nil && targetOld.PublicKey != targetNew.PublicKey) {
+			revoked = append(revoked, c)
+			delete(s.connections, c)
+		}
+	}
 	for id, d := range policy.State.Devices {
 		if old := s.state.Devices[id]; old != nil && old.LastSeen.After(d.LastSeen) {
 			d.LastSeen = old.LastSeen
@@ -257,6 +267,9 @@ func (s *Store) applyPolicy(signed signedPolicy, loading bool) error {
 	s.leaseIssued = policy.Issued
 	s.leaseExpires = policy.Expires
 	s.mu.Unlock()
+	for _, c := range revoked {
+		c.Close()
+	}
 	s.RevokeConnections()
 	return nil
 }

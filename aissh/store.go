@@ -26,19 +26,22 @@ const DefaultTunnelPort = 17000
 var ErrDenied = errors.New("device or session disabled, expired, or unknown")
 
 type Device struct {
-	ID       string          `json:"id"`
-	Name     string          `json:"name"`
-	Username string          `json:"username,omitempty"`
-	Account  string          `json:"account,omitempty"`
-	OS       string          `json:"os"`
-	MACs     []string        `json:"macs"`
-	Enabled  bool            `json:"enabled"`
-	Admin    bool            `json:"admin"`
-	Online   bool            `json:"online"`
-	Created  time.Time       `json:"created"`
-	LastSeen time.Time       `json:"lastSeen"`
-	Secret   string          `json:"secret,omitempty"`
-	Tunnels  map[string]bool `json:"tunnels,omitempty"`
+	ID              string          `json:"id"`
+	PublicKey       string          `json:"devicePublicKey,omitempty"`
+	Hardware        []string        `json:"hardware,omitempty"`
+	HardwareChanged bool            `json:"hardwareChanged,omitempty"`
+	Name            string          `json:"name"`
+	Username        string          `json:"username,omitempty"`
+	Account         string          `json:"account,omitempty"`
+	OS              string          `json:"os"`
+	MACs            []string        `json:"macs"`
+	Enabled         bool            `json:"enabled"`
+	Admin           bool            `json:"admin"`
+	Online          bool            `json:"online"`
+	Created         time.Time       `json:"created"`
+	LastSeen        time.Time       `json:"lastSeen"`
+	Secret          string          `json:"secret,omitempty"`
+	Tunnels         map[string]bool `json:"tunnels,omitempty"`
 }
 type Rule struct {
 	Source    string `json:"source"`
@@ -53,6 +56,7 @@ type state struct {
 }
 type session struct {
 	DeviceID, Token string
+	PublicKey       string
 	Expires         time.Time
 }
 type tracked struct{ Source, Target, RunID string }
@@ -71,6 +75,7 @@ type Store struct {
 	forwardRegistration func(context.Context, Registration) error
 	clock               func() time.Time
 
+	challenges  map[string]time.Time
 	mu          sync.Mutex
 	path        string
 	state       state
@@ -143,11 +148,16 @@ func (s *Store) saveLocked() error {
 }
 
 type Registration struct {
-	Fingerprint Fingerprint `json:"fingerprint"`
-	Name        string      `json:"name"`
-	Username    string      `json:"username,omitempty"`
-	Account     string      `json:"account,omitempty"`
-	OS          string      `json:"os"`
+	Fingerprint Fingerprint   `json:"fingerprint"`
+	DeviceID    string        `json:"deviceID,omitempty"`
+	PublicKey   string        `json:"publicKey,omitempty"`
+	Challenge   string        `json:"challenge,omitempty"`
+	Signature   string        `json:"signature,omitempty"`
+	Legacy      []Fingerprint `json:"legacy,omitempty"`
+	Name        string        `json:"name"`
+	Username    string        `json:"username,omitempty"`
+	Account     string        `json:"account,omitempty"`
+	OS          string        `json:"os"`
 }
 type Grant struct {
 	Target string `json:"target"`
@@ -177,12 +187,22 @@ func (s *Store) now() time.Time {
 }
 func (s *Store) leaseValidLocked() bool { return !s.replica || s.now().Before(s.leaseExpires) }
 func validRegistration(r Registration) (string, error) {
-	id, e := r.Fingerprint.ID()
+	fp := r.Fingerprint
+	if r.DeviceID != "" && len(fp.MACs) == 0 {
+		fp.MACs = []string{"02:00:00:00:00:01"}
+	}
+	id, e := fp.ID()
 	if e != nil {
 		return "", e
 	}
 	if len(r.Name) > 128 || len(r.OS) > 32 || len(r.Username) > 256 || len(r.Account) > 256 || strings.ContainsFunc(r.Username+r.Account, unicode.IsControl) {
 		return "", fmt.Errorf("invalid device details")
+	}
+	if r.DeviceID != "" {
+		if !validDeviceID(r.DeviceID) {
+			return "", fmt.Errorf("invalid device ID")
+		}
+		id = r.DeviceID
 	}
 	return id, nil
 }
@@ -215,6 +235,10 @@ func (s *Store) upsertLocked(r Registration, id string) (*Device, error) {
 		}
 	} else if !s.replica {
 		old := *d
+		if d.PublicKey != "" {
+			d.MACs = append([]string(nil), r.Fingerprint.MACs...)
+			d.HardwareChanged = hardwareMismatch(d.Hardware, r.Fingerprint.Hardware)
+		}
 		d.Name, d.OS = r.Name, r.OS
 		// Older clients omit these fields; keep previously reported account details.
 		if r.Username != "" {
@@ -223,7 +247,7 @@ func (s *Store) upsertLocked(r Registration, id string) (*Device, error) {
 		if r.Account != "" {
 			d.Account = r.Account
 		}
-		if d.Name != old.Name || d.OS != old.OS || d.Username != old.Username || d.Account != old.Account {
+		if d.Name != old.Name || d.OS != old.OS || d.Username != old.Username || d.Account != old.Account || !sameStrings(d.MACs, old.MACs) || d.HardwareChanged != old.HardwareChanged {
 			if e := s.saveLocked(); e != nil {
 				*d = old
 				return nil, e
@@ -241,6 +265,9 @@ func (s *Store) noteRegistration(r Registration) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if e = s.checkCredentialLocked(r, id, false); e != nil {
+		return e
+	}
 	_, e = s.upsertLocked(r, id)
 	return e
 }
@@ -253,6 +280,9 @@ func (s *Store) Register(r Registration) (DeviceConfig, error) {
 	defer s.mu.Unlock()
 	if !s.leaseValidLocked() {
 		return DeviceConfig{}, ErrDenied
+	}
+	if e = s.checkCredentialLocked(r, id, true); e != nil {
+		return DeviceConfig{}, e
 	}
 	_, e = s.upsertLocked(r, id)
 	if e != nil {
@@ -267,7 +297,7 @@ func (s *Store) Register(r Registration) (DeviceConfig, error) {
 			delete(s.sessions, key)
 		}
 	}
-	v := session{DeviceID: id, Token: randomSecret(), Expires: s.now().Add(24 * time.Hour)}
+	v := session{DeviceID: id, PublicKey: r.PublicKey, Token: randomSecret(), Expires: s.now().Add(24 * time.Hour)}
 	if s.replica && v.Expires.After(s.leaseExpires) {
 		v.Expires = s.leaseExpires
 	}
@@ -279,7 +309,7 @@ func (s *Store) Register(r Registration) (DeviceConfig, error) {
 func (s *Store) sessionLocked(id, token string) (session, error) {
 	v, ok := s.sessions[runID(token)]
 	d := s.state.Devices[id]
-	if !s.leaseValidLocked() || !ok || v.DeviceID != id || d == nil || !d.Enabled || !s.now().Before(v.Expires) || subtle.ConstantTimeCompare([]byte(v.Token), []byte(token)) != 1 {
+	if !s.leaseValidLocked() || !ok || v.DeviceID != id || d == nil || !d.Enabled || (d.PublicKey != "" && v.PublicKey != d.PublicKey) || !s.now().Before(v.Expires) || subtle.ConstantTimeCompare([]byte(v.Token), []byte(token)) != 1 {
 		return session{}, ErrDenied
 	}
 	return v, nil
@@ -544,7 +574,7 @@ func (s *Store) SetRule(source, target string, allow bool) error {
 func (s *Store) allowedLocked(source, target, rid string) bool {
 	v, ok := s.sessions[rid]
 	a, b := s.state.Devices[source], s.state.Devices[target]
-	if !s.leaseValidLocked() || !ok || v.DeviceID != source || !s.now().Before(v.Expires) || a == nil || b == nil || !a.Enabled || !b.Enabled {
+	if !s.leaseValidLocked() || !ok || v.DeviceID != source || !s.now().Before(v.Expires) || a == nil || b == nil || !a.Enabled || !b.Enabled || (a.PublicKey != "" && v.PublicKey != a.PublicKey) {
 		return false
 	}
 	for _, r := range s.state.Rules {
@@ -586,7 +616,7 @@ func (s *Store) RevokeConnections() {
 		}
 	}
 	for k, v := range s.sessions {
-		if !s.now().Before(v.Expires) {
+		if d := s.state.Devices[v.DeviceID]; !s.now().Before(v.Expires) || d == nil || (d.PublicKey != "" && d.PublicKey != v.PublicKey) {
 			delete(s.sessions, k)
 		}
 	}

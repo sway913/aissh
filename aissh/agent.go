@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,6 +26,7 @@ type AgentOptions struct {
 	Host, APIURL, CAFile, StateDir string
 	TunnelPort, SSHPort            int
 	ManagedIdentity                *StartupConfig `json:"-"`
+	StateDirExplicit               bool           `json:"-"`
 }
 type apiError struct{ Status int }
 
@@ -110,17 +112,38 @@ func RunAgent(ctx context.Context, o AgentOptions) error {
 	if o.SSHPort < 1 || o.SSHPort > 65535 {
 		return fmt.Errorf("invalid local SSH port")
 	}
+	o.APIURL = base
+	o, e = ResolveAgentIdentityOptions(o)
+	if e != nil {
+		return e
+	}
+	if e = adoptIdentityUser(o.ManagedIdentity); e != nil {
+		return e
+	}
+	if e = os.MkdirAll(o.StateDir, 0700); e != nil {
+		return e
+	}
+	unlock, e := lockAgentIdentity(o.StateDir)
+	if e != nil {
+		return e
+	}
+	defer unlock()
 	fp, e := DetectFingerprint()
 	if e != nil {
-		return fmt.Errorf("identify hardware: %w", e)
+		log.Printf("hardware observation incomplete: %v", e)
 	}
-	if o.ManagedIdentity != nil && runtime.GOOS == "windows" {
-		fp.Hardware = o.ManagedIdentity.Hardware
+	adapters, _ := net.Interfaces()
+	var oldHardware [][]string
+	if o.ManagedIdentity != nil {
+		oldHardware = append(oldHardware, o.ManagedIdentity.Hardware)
 	}
-	id, _ := fp.ID()
+	identity, e := loadOrCreateIdentity(o.StateDir, base, fp, adapters, oldHardware...)
+	if e != nil {
+		return e
+	}
 	name, _ := os.Hostname()
 	username, account, accountErr := detectAccount(runtime.GOOS, name)
-	if o.ManagedIdentity != nil && runtime.GOOS == "windows" {
+	if o.ManagedIdentity != nil {
 		username, account, accountErr = o.ManagedIdentity.Username, o.ManagedIdentity.Account, nil
 	}
 	if accountErr != nil {
@@ -143,8 +166,13 @@ func RunAgent(ctx context.Context, o AgentOptions) error {
 	if e = os.WriteFile(caPath, ca, 0600); e != nil {
 		return e
 	}
-	log.Printf("device %s (%s); registering with %s", id, name, base)
-	return runMultiNodeAgent(ctx, o, Registration{Fingerprint: fp, Name: name, OS: runtime.GOOS, Username: username, Account: account}, id, ca)
+	registration := Registration{Fingerprint: fp, Name: name, OS: runtime.GOOS, Username: username, Account: account}
+	log.Printf("registering with %s; loading fixed device identity", base)
+	if e = waitEnrollment(ctx, o, identity, registration); e != nil {
+		return e
+	}
+	log.Printf("device %s (%s); registering with %s", identity.ID, name, base)
+	return runMultiNodeAgentWithIdentity(ctx, o, registration, identity, ca)
 }
 
 func launchAgentService(ctx context.Context, svc *client.Service) (context.CancelFunc, chan struct{}) {
