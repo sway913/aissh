@@ -24,6 +24,7 @@ func main() {
 	foreground := flag.Bool("foreground", false, "run in terminal without installing boot startup")
 	serviceRun := flag.Bool("service-run", false, "run the installed background client")
 	serviceAction := flag.String("service", "", "startup management: status, update, uninstall")
+	setupSSH := flag.Bool("setup-ssh", false, "detect, install and enable the system SSH server (requires administrator)")
 	showVersion := flag.Bool("version", false, "print aissh version and commit")
 	flag.Parse()
 	flag.Visit(func(f *flag.Flag) {
@@ -33,6 +34,12 @@ func main() {
 	})
 	if *showVersion {
 		fmt.Println(aissh.VersionString())
+		return
+	}
+	if !*serviceRun && (*serviceAction == "" || *serviceAction == "update") {
+		aissh.PrepareSSHService(o.SSHPort)
+	}
+	if *setupSSH {
 		return
 	}
 	if !*serviceRun && o.StateDir == "" {

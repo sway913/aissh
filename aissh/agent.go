@@ -34,7 +34,7 @@ func (e apiError) Error() string { return fmt.Sprintf("server returned HTTP %d",
 func callAPI(ctx context.Context, h *http.Client, method, url, id, token string, body any, out any) error {
 	var b []byte
 	var e error
-	if body != nil {
+	if _, statusHeader := body.(SSHServiceStatus); body != nil && !statusHeader {
 		b, e = json.Marshal(body)
 		if e != nil {
 			return e
@@ -45,6 +45,10 @@ func callAPI(ctx context.Context, h *http.Client, method, url, id, token string,
 		return e
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if status, ok := body.(SSHServiceStatus); ok {
+		raw, _ := json.Marshal(status)
+		req.Header.Set("X-Aissh-SSH-Status", string(raw))
+	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("X-Aissh-Device", id)

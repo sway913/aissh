@@ -53,3 +53,11 @@ python3 hack/aissh-package.py --os windows --arch amd64 --version dev
 ```
 
 输出默认位于 `dist/aissh/`，并生成每个压缩包的 `.sha256` 文件。构建时注入产品版本和提交；默认服务器及其公开信任证书保持一致。
+
+## 客户端自动配置 SSH 服务
+
+手动运行 `aisshc`（包括 `--service update`）时，客户端检测本机 SSH 服务，使用已有管理员权限安装 OpenSSH Server、启动服务并设置开机自启动；权限不足会输出提权操作说明。也可单独执行 `sudo ./aisshc --setup-ssh`，Windows 在管理员 PowerShell 执行 `.\aisshc.exe --setup-ssh`。服务配置失败不阻止客户端连接其他设备。
+
+支持 Windows OpenSSH Server 功能、Linux apt/dnf/yum/zypper/apk（systemd/OpenRC），以及 macOS 系统远程登录。macOS 的 systemsetup 可能需要终端的完全磁盘访问权限；客户端会提示系统设置路径。自定义 `--ssh-port` 只检测，不改系统端口。后台进程不弹提权提示、不运行软件包安装；每 10 秒检测本机 SSH 标识并通过已认证心跳上报。后台设备列表显示 SSH 就绪、未安装、未启动、服务异常或状态已过期。此检测不代表账户密码一定可登录。
+
+不会修改密码、允许 root 登录、关闭系统认证或改写用户现有 sshd 配置。安装系统 SSH 软件可能创建发行版默认防火墙规则；aissh 本身不添加开放 22 端口的规则，隧道仍访问本机回环 SSH 服务。

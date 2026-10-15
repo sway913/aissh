@@ -119,6 +119,12 @@ func DeviceHandler(s *Store) http.Handler {
 			fail(w, 401, "register again or contact administrator")
 			return
 		}
+		if raw := r.Header.Get("X-Aissh-SSH-Status"); len(raw) > 0 && len(raw) <= 1024 {
+			var status SSHServiceStatus
+			if json.Unmarshal([]byte(raw), &status) == nil {
+				s.recordSSHStatus(c.ID, token, status)
+			}
+		}
 		respond(w, 200, c)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

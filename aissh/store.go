@@ -26,22 +26,23 @@ const DefaultTunnelPort = 17000
 var ErrDenied = errors.New("device or session disabled, expired, or unknown")
 
 type Device struct {
-	ID              string          `json:"id"`
-	PublicKey       string          `json:"devicePublicKey,omitempty"`
-	Hardware        []string        `json:"hardware,omitempty"`
-	HardwareChanged bool            `json:"hardwareChanged,omitempty"`
-	Name            string          `json:"name"`
-	Username        string          `json:"username,omitempty"`
-	Account         string          `json:"account,omitempty"`
-	OS              string          `json:"os"`
-	MACs            []string        `json:"macs"`
-	Enabled         bool            `json:"enabled"`
-	Admin           bool            `json:"admin"`
-	Online          bool            `json:"online"`
-	Created         time.Time       `json:"created"`
-	LastSeen        time.Time       `json:"lastSeen"`
-	Secret          string          `json:"secret,omitempty"`
-	Tunnels         map[string]bool `json:"tunnels,omitempty"`
+	SSHService      SSHServiceStatus `json:"sshService"`
+	ID              string           `json:"id"`
+	PublicKey       string           `json:"devicePublicKey,omitempty"`
+	Hardware        []string         `json:"hardware,omitempty"`
+	HardwareChanged bool             `json:"hardwareChanged,omitempty"`
+	Name            string           `json:"name"`
+	Username        string           `json:"username,omitempty"`
+	Account         string           `json:"account,omitempty"`
+	OS              string           `json:"os"`
+	MACs            []string         `json:"macs"`
+	Enabled         bool             `json:"enabled"`
+	Admin           bool             `json:"admin"`
+	Online          bool             `json:"online"`
+	Created         time.Time        `json:"created"`
+	LastSeen        time.Time        `json:"lastSeen"`
+	Secret          string           `json:"secret,omitempty"`
+	Tunnels         map[string]bool  `json:"tunnels,omitempty"`
 }
 type Rule struct {
 	Source    string `json:"source"`

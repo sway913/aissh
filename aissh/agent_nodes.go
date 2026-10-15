@@ -229,7 +229,7 @@ func (r *agentRouter) runNode(ctx context.Context, w *nodeWorker) {
 				err = callAPI(ctx, h, "POST", n.APIURL+"/v1/register", "", "", reg, &c)
 			}
 		} else {
-			err = callAPI(ctx, h, "GET", n.APIURL+"/v1/config", r.id, token, nil, &c)
+			err = callAPI(ctx, h, "GET", n.APIURL+"/v1/config", r.id, token, probeSSHService(o.SSHPort), &c)
 		}
 		if err != nil {
 			var ae apiError
