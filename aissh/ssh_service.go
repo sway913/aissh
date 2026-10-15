@@ -94,15 +94,15 @@ func available(look func(string) (string, error), name string) bool {
 
 // PrepareSSHService runs only on explicit interactive launches, before the agent
 // drops privileges. Background clients never prompt or invoke package managers.
-func PrepareSSHService(port int) {
+func PrepareSSHService(port int) bool {
 	s := probeSSHService(port)
 	if s.State == "ready" && (!startupAdmin() || port != 22 || runtime.GOOS == "darwin") {
 		log.Print("SSH 服务已就绪")
-		return
+		return true
 	}
 	if port != 22 {
 		log.Printf("SSH：%s；自定义端口 %d 请手动配置", s.Detail, port)
-		return
+		return false
 	}
 	if !startupAdmin() {
 		exe, _ := os.Executable()
@@ -111,12 +111,12 @@ func PrepareSSHService(port int) {
 		} else {
 			log.Printf("SSH 服务尚未就绪。请在终端执行：sudo '%s' --setup-ssh", strings.ReplaceAll(exe, "'", "'\"'\"'"))
 		}
-		return
+		return false
 	}
 	cmds, err := sshRepairCommands(runtime.GOOS, exec.LookPath)
 	if err != nil {
 		log.Print(err)
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -130,11 +130,15 @@ func PrepareSSHService(port int) {
 			if runtime.GOOS == "darwin" {
 				log.Print("请在系统设置 → 隐私与安全性 → 完全磁盘访问中允许当前终端，或在 通用 → 共享 → 远程登录 手动开启并允许登录用户")
 			}
-			return
+			return false
 		}
 	}
 	s = probeSSHService(port)
 	log.Printf("SSH 服务状态：%s（%s）", s.State, s.Detail)
+	if s.State != "ready" && runtime.GOOS == "darwin" {
+		log.Print("请在系统设置 → 隐私与安全性 → 完全磁盘访问中允许当前终端，或在 通用 → 共享 → 远程登录 手动开启并允许登录用户")
+	}
+	return s.State == "ready"
 }
 
 func sshServerInstalled() bool {

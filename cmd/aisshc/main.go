@@ -36,11 +36,14 @@ func main() {
 		fmt.Println(aissh.VersionString())
 		return
 	}
-	if !*serviceRun && (*serviceAction == "" || *serviceAction == "update") {
-		aissh.PrepareSSHService(o.SSHPort)
-	}
-	if *setupSSH {
-		return
+	if !*serviceRun && (*setupSSH || *serviceAction == "" || *serviceAction == "update") {
+		ready := aissh.PrepareSSHService(o.SSHPort)
+		if *setupSSH {
+			if !ready {
+				os.Exit(1)
+			}
+			return
+		}
 	}
 	if !*serviceRun && o.StateDir == "" {
 		home, err := os.UserConfigDir()
