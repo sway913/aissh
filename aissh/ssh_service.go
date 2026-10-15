@@ -18,6 +18,7 @@ import (
 // SSHServiceStatus describes the target's system SSH endpoint, not tunnel health.
 type SSHServiceStatus struct {
 	State     string    `json:"state"`
+	Fresh     bool      `json:"fresh"`
 	Detail    string    `json:"detail,omitempty"`
 	CheckedAt time.Time `json:"checkedAt"`
 }

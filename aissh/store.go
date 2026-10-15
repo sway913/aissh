@@ -364,6 +364,9 @@ func (s *Store) Snapshot() ([]Device, []Rule) {
 	for _, p := range s.state.Devices {
 		d := *p
 		d.Secret = ""
+		// Use the reporting server clock, never the browser clock, for freshness.
+		sshAge := now.Sub(d.SSHService.CheckedAt)
+		d.SSHService.Fresh = d.SSHService.State != "" && sshAge >= 0 && sshAge < 45*time.Second
 		if s.replica {
 			d.LastSeen = s.heartbeats[d.ID]
 		}

@@ -91,3 +91,30 @@ func TestSSHStatusAuthenticatedHeartbeat(t *testing.T) {
 		t.Fatal("old client heartbeat broken", e)
 	}
 }
+
+func TestSSHStatusFreshnessUsesServerClock(t *testing.T) {
+	s, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately differ from the wall clock/browser time by several hours.
+	now := time.Now().Add(-3 * time.Hour)
+	s.clock = func() time.Time { return now }
+	c := mustRegister(t, s, "00:11:22:33:44:55", "clock-test")
+	s.recordSSHStatus(c.ID, c.Token, SSHServiceStatus{State: "ready", CheckedAt: time.Now()})
+	devices, _ := s.Snapshot()
+	if !devices[0].SSHService.Fresh {
+		t.Fatal("fresh report rejected because of a different clock")
+	}
+	now = now.Add(46 * time.Second)
+	devices, _ = s.Snapshot()
+	if devices[0].SSHService.Fresh {
+		t.Fatal("stale SSH report remained fresh")
+	}
+	// A sender cannot manufacture freshness using its own boolean or timestamp.
+	s.recordSSHStatus(c.ID, "invalid", SSHServiceStatus{State: "ready", Fresh: true, CheckedAt: now})
+	devices, _ = s.Snapshot()
+	if devices[0].SSHService.Fresh {
+		t.Fatal("unauthenticated report refreshed status")
+	}
+}
